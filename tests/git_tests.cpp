@@ -49,7 +49,10 @@ GitResult init(const QString& directory) {
     auto result = git(directory, {"init", "--initial-branch=main"});
     if (!result.ok())
         return result;
-    return git(directory, {"config", "user.name", "idea4git Tests"});
+    result = git(directory, {"config", "user.name", "idea4git Tests"});
+    if (!result.ok())
+        return result;
+    return git(directory, {"config", "user.email", "tests@example.invalid"});
 }
 
 GitResult commit(const QString& directory, const QString& message) {
