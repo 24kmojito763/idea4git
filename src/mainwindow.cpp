@@ -10,6 +10,7 @@
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QCursor>
 #include <QDateTime>
@@ -861,14 +862,17 @@ void MainWindow::buildMenus() {
         [this] {
             QMessageBox::about(
                 this, text("关于 idea4git", "About idea4git"),
-                text("idea4git 0.2.0 · 本机预览版\nC++17 / Qt 6 Widgets / QScintilla / Git CLI\n\n"
-                     "支持版本比较、三方冲突解决与 Git 高级工作流。\n"
-                     "QScintilla 开源版受 GPLv3 约束，发布前请核验许可。",
-                     "idea4git 0.2.0 · Local preview\nC++17 / Qt 6 Widgets / QScintilla / Git "
-                     "CLI\n\n"
-                     "Revision comparison, three-way conflict resolution and advanced Git "
-                     "workflows.\n"
-                     "Open-source QScintilla is GPLv3; review licensing before distribution."));
+                text(
+                    "idea4git %1 · 跨平台桌面版\nC++17 / Qt 6 Widgets / QScintilla / Git CLI\n\n"
+                    "支持版本比较、三方冲突解决与 Git 高级工作流。\n"
+                    "本项目按 GPL-3.0-only 发布；QScintilla 开源版受 GPLv3 约束。",
+                    "idea4git %1 · Cross-platform desktop app\nC++17 / Qt 6 Widgets / QScintilla / "
+                    "Git CLI\n\n"
+                    "Revision comparison, three-way conflict resolution and advanced Git "
+                    "workflows.\n"
+                    "This project is GPL-3.0-only; open-source QScintilla is licensed under "
+                    "GPLv3.")
+                    .arg(QCoreApplication::applicationVersion()));
         });
     auto* toolbar = addToolBar(QStringLiteral("Workspace"));
     toolbar->setObjectName(QStringLiteral("workspaceToolbar"));

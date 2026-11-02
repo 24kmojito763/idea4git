@@ -2,7 +2,7 @@
 
 面向 Linux、Windows 和 macOS 的低资源占用 IDEA 精简版，主要用于浏览项目结构、查看和修改代码，以及完成 IDEA 风格的 Git 图形化操作。
 
-> 已有可本机编译运行的 **0.2 原生桌面预览版**：C++17、Qt 6 Widgets、QScintilla 和系统 Git（高级流程要求 Git 2.38+，本机为 2.43）。本版新增任意两提交比较、三方冲突解决及 merge/rebase/cherry-pick/revert/reset/stash。操作入口与边界见 [高级 Git 使用说明](docs/advanced-git.md)。
+> **v1.0.0 首个跨平台版本**：基于 C++17、Qt 6 Widgets、QScintilla 和系统 Git（高级流程要求 Git 2.38+）。包含任意两提交比较、三方冲突解决及 merge/rebase/cherry-pick/revert/reset/stash。Windows/macOS 的构建与测试由本次 Release 工作流验证；这不替代所有系统版本和 CPU 架构上的手工 QA。操作入口与边界见 [高级 Git 使用说明](docs/advanced-git.md)。
 
 ## 本机快速运行
 
@@ -62,7 +62,7 @@ QT_QPA_PLATFORM=offscreen ./build/idea4git_demo_preview build/idea4git-advanced-
 
 跨平台安装包发布后可从 [idea4git Releases](https://github.com/24kmojito763/idea4git/releases) 下载。
 
-推送 `v` 开头的版本标签（例如 `v0.2.0`）后，GitHub Actions 会分别构建并测试 Linux、Windows 和 macOS，然后自动创建 GitHub Release 并附上平台产物：Ubuntu/Debian 的 `.deb`、Windows x64 的 `.zip`，以及当前 macOS runner 架构的 `.zip`。macOS 与 Windows 包会携带 Qt 运行库；三个平台都要求用户另行安装 Git。Linux `.deb` 由系统包管理器解析 Qt 运行时依赖。
+推送 `v` 开头的版本标签（首发版本为 `v1.0.0`）后，GitHub Actions 会分别构建并测试 Linux、Windows 和 macOS，然后自动创建 GitHub Release 并附上平台产物：Ubuntu/Debian 的 `.deb`、Windows x64 的 `.zip`，以及当前 macOS runner 架构的 `.zip`。macOS 与 Windows 包会携带 Qt 运行库；三个平台都要求用户另行安装 Git。Linux `.deb` 由系统包管理器解析 Qt 运行时依赖。
 
 项目许可证已确定为 **GPL-3.0-only**，仓库包含完整 `LICENSE`。Release 工作流会附上构建所用的 QScintilla 源码。macOS 包目前没有 Developer ID 签名或 notarization，Windows 包也未签名；Gatekeeper 或 SmartScreen 仍可能显示安全提示。
 

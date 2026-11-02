@@ -30,7 +30,7 @@ idea4git 是面向 Linux、Windows 和 macOS 的低资源占用 IDEA 精简版�
 
 ## 当前状态
 
-已有 C++17 / Qt 6 Widgets / QScintilla 的 0.2 本机预览版，支持代码编辑、文件级 Git、任意两提交比较、三方文本冲突解决及 merge/rebase/cherry-pick/revert/reset/stash。修改高级 Git 或冲突流程时先读 `docs/advanced-git.md`（安全确认、状态恢复和验收覆盖）；整体边界见 `docs/preview.md`。按行暂存、拓扑图、交互式 rebase 尚未实现。GitHub Actions 的三平台发布流程见 `docs/releases.md`；Windows/macOS 首次 CI 成功前仍未验证。
+v1.0.0 是首个跨平台发行目标，基于 C++17 / Qt 6 Widgets / QScintilla，支持代码编辑、文件级 Git、任意两提交比较、三方文本冲突解决及 merge/rebase/cherry-pick/revert/reset/stash。修改高级 Git 或冲突流程时先读 `docs/advanced-git.md`（安全确认、状态恢复和验收覆盖）；整体边界见 `docs/preview.md`。按行暂存、拓扑图、交互式 rebase 尚未实现。GitHub Actions 的三平台发布流程见 `docs/releases.md`；Windows/macOS 的首次 Release 构建与测试成功后才视为 CI 已验证，且 CI 不替代所有系统版本和 CPU 架构的手工 QA。
 
 - 构建：`cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON`，然后 `cmake --build build -j 4`。
 - 测试：`ctest --test-dir build --output-on-failure`。测试配置已设置 offscreen，使用独立临时仓库与配置，不得改用用户仓库运行写入测试。

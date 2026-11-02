@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-set(IDEA4GIT_VERSION "0.2.0" CACHE STRING "idea4git application and package version")
+set(IDEA4GIT_VERSION "1.0.0" CACHE STRING "idea4git application and package version")
 project(idea4git VERSION "${IDEA4GIT_VERSION}" LANGUAGES CXX)
 
 include(GNUInstallDirs)
