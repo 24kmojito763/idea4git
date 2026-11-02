@@ -270,10 +270,21 @@ class GitTests final : public QObject {
         QVERIFY(write(repository.path(), "conflict.txt", "main\n"));
         QVERIFY(git(repository.path(), {"add", "."}).ok());
         QVERIFY(commit(repository.path(), "Main").ok());
-        QVERIFY(!git(repository.path(), {"merge", "--no-edit", "feature"}).ok());
-        const auto status =
-            parseStatus(git(repository.path(), {"status", "--porcelain=v1", "-z"}).output);
-        QCOMPARE(status.files.size(), 1);
+        const auto merge = git(repository.path(), {"merge", "--no-edit", "feature"});
+        const auto statusResult = git(repository.path(), {"status", "--porcelain=v1", "-z"});
+        const auto status = parseStatus(statusResult.output);
+        const auto details =
+            QStringLiteral("merge exit=%1 stderr(hex)=%2; status exit=%3 stderr(hex)=%4 "
+                           "output(hex)=%5")
+                .arg(merge.exitCode)
+                .arg(QString::fromLatin1(merge.error.toHex(' ')))
+                .arg(statusResult.exitCode)
+                .arg(QString::fromLatin1(statusResult.error.toHex(' ')))
+                .arg(QString::fromLatin1(statusResult.output.toHex(' ')));
+        QVERIFY2(!merge.ok(), qPrintable(details));
+        QVERIFY2(statusResult.ok(), qPrintable(details));
+        QVERIFY2(status.valid, qPrintable(details));
+        QVERIFY2(status.files.size() == 1, qPrintable(details));
         QVERIFY(status.files[0].conflict());
         QVERIFY(!status.files[0].staged());
     }
