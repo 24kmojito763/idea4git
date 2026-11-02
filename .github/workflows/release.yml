@@ -109,7 +109,7 @@ jobs:
             "-DIDEA4GIT_VERSION=$version" `
             "-DCMAKE_PREFIX_PATH=$qtPrefix" `
             "-DQSCINTILLA_INCLUDE_DIR=$env:QSCINTILLA_SRC" `
-            "-DQSCINTILLA_LIBRARY=$env:QSCINTILLA_SRC\qscintilla2_qt6.lib"
+            "-DQSCINTILLA_LIBRARY=$env:QSCINTILLA_SRC\release\qscintilla2_qt6.lib"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build build
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -136,7 +136,8 @@ jobs:
 
   macos:
     name: macOS (native runner architecture)
-    runs-on: macos-latest
+    # Qt 6.8.3's macOS QtGui metadata still links AGL; pin an SDK before macos-latest dropped it.
+    runs-on: macos-15
     needs: [validate-tag]
     steps:
       - uses: actions/checkout@v4
