@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=idea4git
+GenericName=Git Client
+Comment=Lightweight desktop Git client
+Exec=idea4git
+Icon=idea4git
+Terminal=false
+Categories=Development;RevisionControl;
+Keywords=Git;Diff;Merge;Rebase;Commit;

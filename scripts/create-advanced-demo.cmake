@@ -1,0 +1,52 @@
+cmake_minimum_required(VERSION 3.22)
+if(NOT DEFINED DEMO_DIR OR NOT IS_ABSOLUTE "${DEMO_DIR}" OR EXISTS "${DEMO_DIR}")
+    message(FATAL_ERROR "DEMO_DIR must be an absolute, nonexistent directory; existing data is never overwritten.")
+endif()
+find_program(GIT_EXECUTABLE git REQUIRED)
+file(MAKE_DIRECTORY "${DEMO_DIR}/src" "${DEMO_DIR}/docs" "${DEMO_DIR}/.demo-hooks")
+file(WRITE "${DEMO_DIR}/.gitignore" "/build*/\n/.demo-hooks/\n")
+file(WRITE "${DEMO_DIR}/README.md"
+    "# idea4git 0.2 高级 Git 演示\n\n这是独立的临时样例仓库，记录不代表真实开发历史。\n"
+    "仓库故意停在 merge 冲突处：\n\n1. Git → 三方冲突解决，选择 src/palette.cpp。\n"
+    "2. 编辑结果或选择一侧全文，保存，再暂存并标记已解决。\n3. 关闭解决器，在顶部提示条继续合并。\n\n"
+    "也可明确中止合并，再体验版本比较、rebase、cherry-pick、revert、reset 和 stash。\n"
+    "v0.1 / v0.2 是可比较标签；feature/theme 是可操作分支；已有一条演示 stash。\n")
+file(WRITE "${DEMO_DIR}/CMakeLists.txt" "cmake_minimum_required(VERSION 3.22)\nproject(Palette LANGUAGES CXX)\nfind_package(Qt6 REQUIRED COMPONENTS Gui)\nadd_library(palette STATIC src/palette.cpp)\ntarget_link_libraries(palette PUBLIC Qt6::Gui)\n")
+set(source "#include <QColor>\n#include <QString>\n\nnamespace idea4git {\n\n// 工作区的视觉配置。\nQColor accentColor() {\n    return QColor(\"#4b79e8\");\n}\n\nQString workspaceName() {\n    return QStringLiteral(\"idea4git\");\n}\n\n} // namespace idea4git\n")
+file(WRITE "${DEMO_DIR}/src/palette.cpp" "${source}")
+function(demo_git)
+    execute_process(COMMAND "${GIT_EXECUTABLE}" -c user.name=idea4git\ Demo -c user.email=demo@example.invalid
+        -c commit.gpgSign=false -c core.hooksPath=${DEMO_DIR}/.demo-hooks ${ARGN}
+        WORKING_DIRECTORY "${DEMO_DIR}" RESULT_VARIABLE result OUTPUT_QUIET ERROR_VARIABLE error)
+    if(NOT result EQUAL 0)
+        message(FATAL_ERROR "Demo command failed: ${error}")
+    endif()
+endfunction()
+demo_git(init --initial-branch=main)
+demo_git(config user.name "idea4git Demo")
+demo_git(config user.email demo@example.invalid)
+demo_git(config core.hooksPath "${DEMO_DIR}/.demo-hooks")
+demo_git(config commit.gpgSign false)
+demo_git(add -- .)
+demo_git(commit -m "演示：建立配色模块")
+demo_git(tag v0.1)
+demo_git(switch -c feature/theme)
+string(REPLACE "#4b79e8" "#2aacb8" feature "${source}")
+file(WRITE "${DEMO_DIR}/src/palette.cpp" "${feature}")
+demo_git(add -- src/palette.cpp)
+demo_git(commit -m "演示：功能分支改用青色强调")
+demo_git(switch main)
+string(REPLACE "#4b79e8" "#6f9cff" current "${source}")
+file(WRITE "${DEMO_DIR}/src/palette.cpp" "${current}")
+demo_git(add -- src/palette.cpp)
+demo_git(commit -m "演示：主分支提升蓝色对比度")
+demo_git(tag v0.2)
+file(WRITE "${DEMO_DIR}/docs/未完成的想法.md" "# 尚未完成的想法\n\n这一文件被保存在演示 stash 中，可在 Stash 管理器预览或恢复。\n")
+demo_git(stash push --include-untracked -m "演示：暂存未完成的配色想法")
+execute_process(COMMAND "${GIT_EXECUTABLE}" -c core.hooksPath=${DEMO_DIR}/.demo-hooks -c commit.gpgSign=false
+    merge --no-edit feature/theme WORKING_DIRECTORY "${DEMO_DIR}"
+    RESULT_VARIABLE merged OUTPUT_QUIET ERROR_VARIABLE error)
+if(NOT merged EQUAL 1)
+    message(FATAL_ERROR "Expected an intentional merge conflict, got ${merged}: ${error}")
+endif()
+message(STATUS "Created isolated advanced demo with an intentional merge conflict: ${DEMO_DIR}")

@@ -1,0 +1,245 @@
+name: Build and publish releases
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+env:
+  QSCINTILLA_VERSION: 2.14.1
+  QSCINTILLA_URL: https://www.riverbankcomputing.com/static/Downloads/QScintilla/2.14.1/QScintilla_src-2.14.1.tar.gz
+  QSCINTILLA_SHA256: dfe13c6acc9d85dfcba76ccc8061e71a223957a6c02f3c343b30a9d43a4cdd4d
+
+jobs:
+  validate-tag:
+    name: Validate release version tag
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require vMAJOR.MINOR.PATCH
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tags must use vMAJOR.MINOR.PATCH (for example v0.2.0)." >&2
+            exit 1
+          fi
+
+  linux:
+    name: Linux (Ubuntu/Debian package)
+    runs-on: ubuntu-24.04
+    needs: [validate-tag]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build g++ dpkg-dev git \
+            qt6-base-dev libqscintilla2-qt6-dev
+
+      - name: Configure, build, and test
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON \
+            -DIDEA4GIT_VERSION="$version"
+          cmake --build build --parallel 2
+          ctest --test-dir build --output-on-failure
+
+      - name: Package Debian release
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cpack --config build/CPackConfig.cmake -G DEB -B dist
+          mv dist/*.deb "dist/idea4git-${GITHUB_REF_NAME}-linux-amd64.deb"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-package
+          path: dist/*.deb
+          if-no-files-found: error
+
+  windows:
+    name: Windows x64 (ZIP)
+    runs-on: windows-2022
+    needs: [validate-tag]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+
+      - name: Build static QScintilla for this Qt toolchain
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "QScintilla_src-$env:QSCINTILLA_VERSION.tar.gz"
+          Invoke-WebRequest -Uri $env:QSCINTILLA_URL -OutFile $archive
+          $actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $env:QSCINTILLA_SHA256) { throw "QScintilla source checksum mismatch" }
+          tar -xzf $archive -C $env:RUNNER_TEMP
+          $src = Join-Path $env:RUNNER_TEMP "QScintilla_src-$env:QSCINTILLA_VERSION\src"
+          Push-Location $src
+          qmake qscintilla.pro CONFIG+=release CONFIG+=staticlib
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          nmake
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Pop-Location
+          "QSCINTILLA_SRC=$src" >> $env:GITHUB_ENV
+
+      - name: Configure, build, and test
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          $qtPrefix = (qmake -query QT_INSTALL_PREFIX).Trim()
+          cmake -S . -B build -G "NMake Makefiles" `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DBUILD_TESTING=ON `
+            "-DIDEA4GIT_VERSION=$version" `
+            "-DCMAKE_PREFIX_PATH=$qtPrefix" `
+            "-DQSCINTILLA_INCLUDE_DIR=$env:QSCINTILLA_SRC" `
+            "-DQSCINTILLA_LIBRARY=$env:QSCINTILLA_SRC\qscintilla2_qt6.lib"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ctest --test-dir build --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Deploy Qt and create ZIP
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path package, dist | Out-Null
+          cmake --install build --prefix package
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $exe = (Resolve-Path "package\bin\idea4git.exe").Path
+          windeployqt --release --compiler-runtime --no-translations --dir package\bin $exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $archive = "dist\idea4git-$env:GITHUB_REF_NAME-windows-x86_64.zip"
+          Compress-Archive -Path "package\*" -DestinationPath $archive
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-package
+          path: dist/*.zip
+          if-no-files-found: error
+
+  macos:
+    name: macOS (native runner architecture)
+    runs-on: macos-latest
+    needs: [validate-tag]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          target: desktop
+          arch: clang_64
+
+      - name: Install Ninja
+        run: brew install ninja
+
+      - name: Build static QScintilla for this Qt toolchain
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/QScintilla_src-$QSCINTILLA_VERSION.tar.gz"
+          curl -fsSL "$QSCINTILLA_URL" -o "$archive"
+          echo "$QSCINTILLA_SHA256  $archive" | shasum -a 256 -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+          src="$RUNNER_TEMP/QScintilla_src-$QSCINTILLA_VERSION/src"
+          cd "$src"
+          qmake qscintilla.pro CONFIG+=release CONFIG+=staticlib
+          make -j"$(sysctl -n hw.logicalcpu)"
+          echo "QSCINTILLA_SRC=$src" >> "$GITHUB_ENV"
+
+      - name: Configure, build, and test
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          qt_prefix="$(qmake -query QT_INSTALL_PREFIX)"
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON \
+            -DIDEA4GIT_VERSION="$version" \
+            -DCMAKE_PREFIX_PATH="$qt_prefix" \
+            -DQSCINTILLA_INCLUDE_DIR="$QSCINTILLA_SRC" \
+            -DQSCINTILLA_LIBRARY="$QSCINTILLA_SRC/libqscintilla2_qt6.a"
+          cmake --build build --parallel 2
+          ctest --test-dir build --output-on-failure
+
+      - name: Deploy Qt and create ZIP
+        run: |
+          set -euo pipefail
+          mkdir -p package dist
+          cmake --install build --prefix package
+          macdeployqt package/idea4git.app -always-overwrite
+          arch="$(lipo -archs package/idea4git.app/Contents/MacOS/idea4git | tr ' ' '_')"
+          mv package idea4git
+          ditto -c -k --sequesterRsrc --keepParent idea4git \
+            "dist/idea4git-${GITHUB_REF_NAME}-macos-${arch}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-package
+          path: dist/*.zip
+          if-no-files-found: error
+
+  qscintilla-source:
+    name: Prepare QScintilla corresponding source
+    runs-on: ubuntu-24.04
+    needs: [validate-tag]
+    steps:
+      - name: Download and verify QScintilla source
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          curl -fsSL "$QSCINTILLA_URL" -o "dist/QScintilla_src-$QSCINTILLA_VERSION.tar.gz"
+          echo "$QSCINTILLA_SHA256  dist/QScintilla_src-$QSCINTILLA_VERSION.tar.gz" | sha256sum -c -
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qscintilla-source
+          path: dist/QScintilla_src-*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    runs-on: ubuntu-24.04
+    needs: [linux, windows, macos, qscintilla-source]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Require a project license before publishing binaries
+        run: |
+          if [[ ! -f LICENSE && ! -f LICENSE.txt && ! -f COPYING ]]; then
+            echo "The GPL-3.0-only project LICENSE is required before publishing binaries." >&2
+            exit 1
+          fi
+
+      - name: Create or update the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --title "$tag" --generate-notes
+          fi
+          gh release upload "$tag" release-assets/* --clobber

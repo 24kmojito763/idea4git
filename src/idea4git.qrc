@@ -1,0 +1,8 @@
+<RCC>
+    <qresource prefix="/icons">
+        <file alias="down.xpm">resources/down.xpm</file>
+        <file alias="right.xpm">resources/right.xpm</file>
+        <file alias="check.xpm">resources/check.xpm</file>
+        <file alias="idea4git-icon.png">resources/idea4git-icon.png</file>
+    </qresource>
+</RCC>

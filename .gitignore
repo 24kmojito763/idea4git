@@ -1,0 +1,9 @@
+/build*/
+/_CPack_Packages/
+/dist/
+/package/
+/.codegraph/
+/.cache/
+/.idea/
+*.deb
+*.user
