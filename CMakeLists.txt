@@ -1,8 +1,15 @@
 cmake_minimum_required(VERSION 3.22)
 set(IDEA4GIT_VERSION "1.0.0" CACHE STRING "idea4git application and package version")
 project(idea4git VERSION "${IDEA4GIT_VERSION}" LANGUAGES CXX)
+option(IDEA4GIT_TEST_BUILD "Build a side-by-side local test application" OFF)
 
 include(GNUInstallDirs)
+if(IDEA4GIT_TEST_BUILD)
+    set(CMAKE_INSTALL_DOCDIR "${CMAKE_INSTALL_DATAROOTDIR}/doc/idea4git-test")
+    set(IDEA4GIT_APP_NAME "idea4git-test")
+else()
+    set(IDEA4GIT_APP_NAME "idea4git")
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -48,6 +55,10 @@ endif()
 add_executable(idea4git src/main.cpp)
 target_link_libraries(idea4git PRIVATE idea4git_core)
 target_compile_definitions(idea4git PRIVATE IDEA4GIT_VERSION=\"${PROJECT_VERSION}\")
+target_compile_definitions(idea4git_core PUBLIC "IDEA4GIT_APP_NAME=\"${IDEA4GIT_APP_NAME}\"")
+if(IDEA4GIT_TEST_BUILD)
+    set_target_properties(idea4git PROPERTIES OUTPUT_NAME "idea4git-test")
+endif()
 if(APPLE)
     set_source_files_properties(packaging/macos/idea4git.icns PROPERTIES
         MACOSX_PACKAGE_LOCATION Resources)
@@ -70,10 +81,18 @@ install(TARGETS idea4git
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     BUNDLE DESTINATION .)
 if(UNIX AND NOT APPLE)
-    install(FILES packaging/idea4git.desktop
-        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
-    install(FILES packaging/icons/idea4git.png
-        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/256x256/apps)
+    if(IDEA4GIT_TEST_BUILD)
+        install(FILES packaging/idea4git-test.desktop
+            DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
+        install(FILES packaging/icons/idea4git.png
+            DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/256x256/apps
+            RENAME idea4git-test.png)
+    else()
+        install(FILES packaging/idea4git.desktop
+            DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
+        install(FILES packaging/icons/idea4git.png
+            DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/256x256/apps)
+    endif()
 endif()
 install(FILES README.md docs/advanced-git.md
     DESTINATION ${CMAKE_INSTALL_DOCDIR})

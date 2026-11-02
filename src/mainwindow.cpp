@@ -744,7 +744,7 @@ MainWindow::MainWindow(bool english, QWidget* parent) : QMainWindow(parent), m_e
     setObjectName(QStringLiteral("idea4gitWindow"));
     resize(1500, 940);
     setMinimumSize(1080, 700);
-    setWindowTitle(QStringLiteral("idea4git"));
+    setWindowTitle(QStringLiteral(IDEA4GIT_APP_NAME));
     setWindowIcon(QIcon(QStringLiteral(":/icons/idea4git-icon.png")));
     buildMenus();
     buildWorkflowBar();
@@ -1798,7 +1798,7 @@ bool MainWindow::openProject(const QString& directory) {
     m_projectModel->setGitStatus({}, {});
     m_projectButton->setText(info.fileName());
     m_projectButton->setToolTip(m_projectRoot);
-    setWindowTitle(QStringLiteral("idea4git — ") + info.fileName());
+    setWindowTitle(QStringLiteral(IDEA4GIT_APP_NAME) + QStringLiteral(" — ") + info.fileName());
     m_projectModel->setRootPath(m_projectRoot);
     m_tree->setRootIndex(m_projectFilter->mapFromSource(m_projectModel->index(m_projectRoot)));
     QTimer::singleShot(0, this, &MainWindow::restorePendingProjectTreeExpansions);

@@ -17,14 +17,15 @@
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     QCoreApplication::setOrganizationName(QStringLiteral("idea4git"));
-    QCoreApplication::setApplicationName(QStringLiteral("idea4git"));
+    QCoreApplication::setApplicationName(QStringLiteral(IDEA4GIT_APP_NAME));
     QCoreApplication::setApplicationVersion(QStringLiteral(IDEA4GIT_VERSION));
     app.setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
     QFont font(QStringLiteral("Noto Sans CJK SC"));
     font.setPointSize(10);
     app.setFont(font);
     QCommandLineParser parser;
-    parser.setApplicationDescription(QStringLiteral("idea4git — native Qt code & Git workspace"));
+    parser.setApplicationDescription(QStringLiteral(IDEA4GIT_APP_NAME) +
+                                     QStringLiteral(" — native Qt code & Git workspace"));
     parser.addHelpOption();
     parser.addVersionOption();
     parser.addPositionalArgument(QStringLiteral("directory"),

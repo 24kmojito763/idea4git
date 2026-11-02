@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=idea4git-test
+GenericName=Git Client (Test Build)
+Comment=Local test build of idea4git
+Exec=idea4git-test
+Icon=idea4git-test
+Terminal=false
+Categories=Development;RevisionControl;
+Keywords=Git;Diff;Merge;Rebase;Commit;Test;
