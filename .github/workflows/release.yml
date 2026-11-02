@@ -116,9 +116,15 @@ jobs:
           ctest --test-dir build --output-on-failure
           $ctestExitCode = $LASTEXITCODE
           if ($ctestExitCode -ne 0) {
-            Write-Host "[DEBUG-git-workflows-win] Re-running QtTest directly with detailed output."
-            & .\build\idea4git_git_tests.exe -v2
+            Write-Host "[DEBUG-git-workflows-win] Re-running QtTest with a file-backed detailed report."
+            $diagnosticPath = Join-Path $env:RUNNER_TEMP "idea4git-git-tests.txt"
+            & .\build\idea4git_git_tests.exe -v2 -o "$diagnosticPath,txt"
             $qtTestExitCode = $LASTEXITCODE
+            if (Test-Path $diagnosticPath) {
+              Get-Content -Raw $diagnosticPath
+            } else {
+              Write-Host "[DEBUG-git-workflows-win] QtTest did not create a report file."
+            }
             Write-Host "[DEBUG-git-workflows-win] Detailed QtTest exit code: $qtTestExitCode"
             ctest --test-dir build -R "^git-workflows$" --output-on-failure --verbose
             exit $ctestExitCode
