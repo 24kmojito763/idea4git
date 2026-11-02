@@ -772,6 +772,11 @@ void MainWindow::buildMenus() {
     auto* open = file->addAction(icon("open"), text("打开项目…", "Open project…"));
     open->setShortcut(QKeySequence("Ctrl+O"));
     connect(open, &QAction::triggered, this, &MainWindow::chooseProject);
+    auto* openFile =
+        file->addAction(icon("file", QColor("#7eabdf")), text("打开文件…", "Open file…"));
+    openFile->setObjectName(QStringLiteral("openFileAction"));
+    openFile->setShortcut(QKeySequence("Ctrl+Shift+O"));
+    connect(openFile, &QAction::triggered, this, &MainWindow::chooseFile);
     m_saveAction = file->addAction(icon("save"), text("保存", "Save"));
     m_saveAction->setShortcut(QKeySequence::Save);
     connect(m_saveAction, &QAction::triggered, this, [this] {
@@ -891,6 +896,15 @@ void MainWindow::buildMenus() {
     m_projectButton->setText(text("打开项目", "Open project"));
     connect(m_projectButton, &QToolButton::clicked, this, &MainWindow::chooseProject);
     toolbar->addWidget(m_projectButton);
+    auto* fileButton = new QToolButton(toolbar);
+    fileButton->setObjectName(QStringLiteral("openFileButton"));
+    fileButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    fileButton->setIcon(icon("file", QColor("#7eabdf")));
+    fileButton->setText(text("打开文件", "Open file"));
+    fileButton->setToolTip(text("打开单个文件（如 Markdown 文档）",
+                                "Open a single file, such as a Markdown document"));
+    connect(fileButton, &QToolButton::clicked, this, &MainWindow::chooseFile);
+    toolbar->addWidget(fileButton);
     toolbar->addSeparator();
     m_branch = new QToolButton(toolbar);
     m_branch->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
@@ -1698,6 +1712,16 @@ void MainWindow::chooseProject() {
         QFileDialog::getExistingDirectory(this, text("打开项目", "Open project"), m_projectRoot);
     if (!directory.isEmpty())
         openProject(directory);
+}
+
+void MainWindow::chooseFile() {
+    const auto filePath =
+        QFileDialog::getOpenFileName(this, text("打开文件", "Open file"),
+                                     m_projectRoot.isEmpty() ? QDir::homePath() : m_projectRoot,
+                                     text("Markdown 文档 (*.md *.markdown);;所有文件 (*)",
+                                          "Markdown files (*.md *.markdown);;All files (*)"));
+    if (!filePath.isEmpty())
+        openFile(filePath);
 }
 
 bool MainWindow::openProject(const QString& directory) {

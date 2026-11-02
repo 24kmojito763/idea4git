@@ -68,6 +68,7 @@ class MainWindow final : public QMainWindow {
     void setHistoryPanelVisible(bool visible);
     void syncChangeGroupCheckState(QTreeWidgetItem* group);
     void chooseProject();
+    void chooseFile();
     void showSettings();
     void showBranches();
     void loadHistoryBranches();
