@@ -116,7 +116,10 @@ jobs:
           ctest --test-dir build --output-on-failure
           $ctestExitCode = $LASTEXITCODE
           if ($ctestExitCode -ne 0) {
-            Write-Host "[DEBUG-git-workflows-win] Re-running the failing workflow test verbosely."
+            Write-Host "[DEBUG-git-workflows-win] Re-running QtTest directly with detailed output."
+            & .\build\idea4git_git_tests.exe -v2
+            $qtTestExitCode = $LASTEXITCODE
+            Write-Host "[DEBUG-git-workflows-win] Detailed QtTest exit code: $qtTestExitCode"
             ctest --test-dir build -R "^git-workflows$" --output-on-failure --verbose
             exit $ctestExitCode
           }
