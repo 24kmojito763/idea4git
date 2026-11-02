@@ -114,7 +114,12 @@ jobs:
           cmake --build build
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ctest --test-dir build --output-on-failure
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $ctestExitCode = $LASTEXITCODE
+          if ($ctestExitCode -ne 0) {
+            Write-Host "[DEBUG-git-workflows-win] Re-running the failing workflow test verbosely."
+            ctest --test-dir build -R "^git-workflows$" --output-on-failure --verbose
+            exit $ctestExitCode
+          }
 
       - name: Deploy Qt and create ZIP
         shell: pwsh
