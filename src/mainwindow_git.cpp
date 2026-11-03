@@ -2,6 +2,7 @@
 #include "gitdialogs.h"
 #include "icons.h"
 #include "mainwindow.h"
+#include "paths.h"
 
 #include <QAction>
 #include <QApplication>
@@ -209,6 +210,107 @@ void MainWindow::openFileDiff(const QString& title, const QString& path,
             closeEditor(tab);
     });
     m_editors->setCurrentIndex(index);
+}
+
+void MainWindow::showChangeFileDiff(const FileChange& file) {
+    if (!m_git || m_repositoryRoot.isEmpty())
+        return;
+    if (file.conflict()) {
+        m_activity->setText(text("冲突文件请使用冲突解决器查看和处理。",
+                                 "Use the conflict resolver to inspect conflicted files."));
+        return;
+    }
+
+    const QString path = file.path;
+    const QString oldPath = file.originalPath.isEmpty() ? path : file.originalPath;
+    const QString worktreePath = repositoryFilePath(m_repositoryRoot, path);
+    const bool rightExists = QFileInfo::exists(worktreePath);
+    const bool leftExists =
+        m_hasHead && file.state() != FileState::Added && file.state() != FileState::Untracked;
+
+    QByteArray worktreeBytes;
+    if (rightExists) {
+        QFile source(worktreePath);
+        if (!source.open(QIODevice::ReadOnly) || source.size() > 16 * 1024 * 1024) {
+            QMessageBox::warning(this, text("无法读取文件", "Could not read file"),
+                                 text("工作区文件无法读取或超过 16 MiB。",
+                                      "The working-tree file is unreadable or exceeds 16 MiB."));
+            return;
+        }
+        worktreeBytes = source.readAll();
+    }
+
+    const QString leftRevision = leftExists ? QStringLiteral("HEAD") : text("空文件", "Empty");
+    const QString rightRevision =
+        rightExists ? text("工作区", "Worktree") : text("空文件", "Empty");
+    const QString title = text("未提交差异", "Uncommitted diff");
+    const int request = ++m_diffRequest;
+    const int generation = m_generation;
+
+    struct LoadedDiff {
+        int remaining = 0;
+        bool completed = false;
+        QByteArray left;
+        QByteArray right;
+        QByteArray patch;
+        QString error;
+    };
+    auto loaded = std::make_shared<LoadedDiff>();
+    loaded->right = worktreeBytes;
+
+    const auto finish = [this, generation, request, loaded, path, title, leftRevision,
+                         rightRevision] {
+        if (loaded->remaining > 0 || loaded->completed)
+            return;
+        loaded->completed = true;
+        if (generation != m_generation || request != m_diffRequest)
+            return;
+        if (!loaded->error.isEmpty()) {
+            m_activity->setText(loaded->error);
+            return;
+        }
+        openFileDiff(title, path, leftRevision, loaded->left, rightRevision, loaded->right,
+                     loaded->patch);
+    };
+    const auto loadBlob = [this, loaded, finish](const QString& revision, QByteArray* destination) {
+        ++loaded->remaining;
+        m_git->run(repositoryArgs({"cat-file", "blob", revision}),
+                   [loaded, finish, destination](const GitResult& result) {
+                       if (!result.ok())
+                           loaded->error = QString::fromUtf8(result.error);
+                       else
+                           *destination = result.output;
+                       --loaded->remaining;
+                       finish();
+                   });
+    };
+
+    if (leftExists)
+        loadBlob("HEAD:" + oldPath, &loaded->left);
+
+    const bool untrackedContent = file.state() == FileState::Untracked && rightExists;
+    if (untrackedContent) {
+        loaded->patch = addedFilePatch(path, loaded->right);
+    } else {
+        QStringList args = {"diff", "--no-ext-diff", "--no-textconv", "--find-renames",
+                            "--unified=0"};
+        if (m_hasHead)
+            args.append("HEAD");
+        args.append("--");
+        args.append(path);
+        if (oldPath != path)
+            args.append(oldPath);
+        ++loaded->remaining;
+        m_git->run(repositoryArgs(args), [loaded, finish](const GitResult& result) {
+            if (!result.ok())
+                loaded->error = QString::fromUtf8(result.error);
+            else
+                loaded->patch = result.output;
+            --loaded->remaining;
+            finish();
+        });
+    }
+    finish();
 }
 
 void MainWindow::showCommitFileDiff(const QString& commit, const CommitFileChange& file) {

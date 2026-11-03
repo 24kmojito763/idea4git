@@ -188,6 +188,92 @@ class StashDialog final : public GitDialog {
     QList<StashEntry> m_entries;
 };
 
+class PushDialog final : public QDialog {
+    Q_OBJECT
+  public:
+    PushDialog(GitClient* git, QString repositoryRoot, QString branch, QString tracking,
+               bool english, QWidget* parent = nullptr);
+    void setPushRunning(bool running);
+    void pushFinished(bool success, const QString& message);
+
+  signals:
+    void pushRequested(const QString& remote, const QString& branch);
+    void diffRequested(const QString& commit, const idea4git::CommitFileChange& file);
+
+  private:
+    void loadRemotes();
+    void loadBranches();
+    void loadOutgoingCommits();
+    void loadCommitFiles(int row);
+    void updateControls();
+    QStringList repositoryArgs(const QStringList& args) const;
+    GitClient* m_git;
+    QString m_repositoryRoot;
+    QString m_branch;
+    QString m_tracking;
+    bool m_english;
+    QComboBox* m_remote;
+    QComboBox* m_target;
+    QTableWidget* m_commits;
+    QListWidget* m_files;
+    QLabel* m_status;
+    QPushButton* m_push;
+    QStringList m_commitHashes;
+    int m_loadRequest = 0;
+    int m_fileRequest = 0;
+    bool m_loading = false;
+    bool m_pushRunning = false;
+};
+
+class RemoteManagerDialog final : public QDialog {
+    Q_OBJECT
+  public:
+    RemoteManagerDialog(GitClient* git, QString repositoryRoot, bool english,
+                        QWidget* parent = nullptr);
+
+  private:
+    void refresh();
+    void addRemote();
+    void editRemote();
+    void removeRemote();
+    void updateControls();
+    QStringList repositoryArgs(const QStringList& args) const;
+    GitClient* m_git;
+    QString m_repositoryRoot;
+    bool m_english;
+    QTableWidget* m_remotes;
+    QLabel* m_status;
+    QPushButton* m_add;
+    QPushButton* m_edit;
+    QPushButton* m_remove;
+    bool m_working = false;
+};
+
+class GitCredentialDialog final : public QDialog {
+    Q_OBJECT
+  public:
+    GitCredentialDialog(GitClient* git, bool english, QWidget* parent = nullptr);
+
+  private:
+    void runManager(const QStringList& args, int timeoutMs = 30000);
+    void storeToken();
+    void eraseCredential();
+    void updateControls();
+    GitClient* m_git;
+    bool m_english;
+    QLineEdit* m_host;
+    QLineEdit* m_username;
+    QLineEdit* m_token;
+    QLineEdit* m_eraseUsername;
+    QLabel* m_status;
+    QPlainTextEdit* m_accounts;
+    QPushButton* m_browserLogin;
+    QPushButton* m_storeToken;
+    QPushButton* m_erase;
+    QPushButton* m_logout;
+    bool m_working = false;
+};
+
 QString operationName(OperationKind kind, bool english);
 QString pendingName(PendingOperation pending, bool english);
 

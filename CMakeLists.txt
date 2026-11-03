@@ -36,7 +36,7 @@ add_library(idea4git_core STATIC
     src/gitclient.cpp src/gitclient.h
     src/gitstatus.cpp src/gitstatus.h
     src/gitoperations.cpp src/gitoperations.h
-    src/gitdialogs.cpp src/gitdialogs.h
+    src/gitdialogs.cpp src/gitremotedialogs.cpp src/gitdialogs.h
     src/idea4git.qrc
     src/codeeditor.cpp src/codeeditor.h
     src/projectmodel.cpp src/projectmodel.h

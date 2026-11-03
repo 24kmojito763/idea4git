@@ -838,6 +838,13 @@ void MainWindow::buildMenus() {
     auto* git = menuBar()->addMenu(QStringLiteral("Git"));
     buildAdvancedActions(git);
     git->addSeparator();
+    auto* remoteManager = git->addAction(text("管理远程…", "Manage Remotes…"));
+    remoteManager->setObjectName(QStringLiteral("manageRemotesAction"));
+    connect(remoteManager, &QAction::triggered, this, &MainWindow::showRemotes);
+    auto* credentialManager = git->addAction(text("Git 凭据…", "Git Credentials…"));
+    credentialManager->setObjectName(QStringLiteral("gitCredentialsAction"));
+    connect(credentialManager, &QAction::triggered, this, &MainWindow::showCredentials);
+    git->addSeparator();
     m_refreshAction = git->addAction(icon("refresh"), text("刷新状态", "Refresh status"));
     m_refreshAction->setShortcut(QKeySequence("F5"));
     connect(m_refreshAction, &QAction::triggered, this, &MainWindow::refreshRepository);
@@ -846,7 +853,7 @@ void MainWindow::buildMenus() {
     m_pushAction = git->addAction(icon("push"), text("推送", "Push"));
     connect(m_fetchAction, &QAction::triggered, this, [this] { remoteOperation("fetch"); });
     connect(m_pullAction, &QAction::triggered, this, [this] { remoteOperation("pull"); });
-    connect(m_pushAction, &QAction::triggered, this, [this] { remoteOperation("push"); });
+    connect(m_pushAction, &QAction::triggered, this, &MainWindow::showPushPreview);
     git->addSeparator();
     m_cancelAction = git->addAction(text("取消 Git 操作", "Cancel Git operation"));
     connect(m_cancelAction, &QAction::triggered, this, [this] {
@@ -1186,15 +1193,6 @@ void MainWindow::buildWorkspace() {
     m_changeCount->setObjectName(QStringLiteral("countBadge"));
     changesHeaderLayout->addWidget(m_changeCount);
     changesHeaderLayout->addStretch();
-    m_stage = toolButton("plus", text("暂存所选文件", "Stage selected files"), changesHeader);
-    m_unstage =
-        toolButton("minus", text("撤销暂存所选文件", "Unstage selected files"), changesHeader);
-    m_stage->setObjectName(QStringLiteral("stageButton"));
-    m_unstage->setObjectName(QStringLiteral("unstageButton"));
-    connect(m_stage, &QToolButton::clicked, this, [this] { stageSelection(false); });
-    connect(m_unstage, &QToolButton::clicked, this, [this] { stageSelection(true); });
-    changesHeaderLayout->addWidget(m_stage);
-    changesHeaderLayout->addWidget(m_unstage);
     auto* hideCommitPanel =
         toolButton("hideRight", text("隐藏提交面板", "Hide Commit panel"), changesHeader);
     hideCommitPanel->setObjectName(QStringLiteral("hideCommitPanelButton"));
@@ -1214,8 +1212,9 @@ void MainWindow::buildWorkspace() {
     m_changes->setIndentation(14);
     m_changes->setUniformRowHeights(true);
     m_changes->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    m_changes->setToolTip(text("勾选文件暂存到本次提交，取消勾选会撤销暂存。",
-                               "Check files to stage them for this commit; uncheck to unstage."));
+    m_changes->setToolTip(text("勾选要包含在本次提交中的文件；不会改变 Git 暂存区。",
+                               "Check the files to include in this commit; this does not change "
+                               "Git's index."));
     commitLayout->addWidget(m_changes, 1);
     connect(m_changes, &QTreeWidget::itemClicked, this,
             [this](QTreeWidgetItem* item) { showDiff(item); });
@@ -1227,9 +1226,17 @@ void MainWindow::buildWorkspace() {
             return;
         m_changes->setCurrentItem(item);
         const auto& file = m_status.files[index];
+        QMenu menu(this);
+        auto* gitDiff = menu.addAction(text("查看 Git Diff", "Git Diff"));
+        gitDiff->setObjectName(QStringLiteral("gitDiffAction"));
+        gitDiff->setEnabled(!file.conflict());
+        if (file.conflict())
+            gitDiff->setToolTip(text("冲突文件请使用冲突解决器查看和处理。",
+                                     "Use the conflict resolver to inspect conflicted files."));
+        connect(gitDiff, &QAction::triggered, this, [this, file] { showChangeFileDiff(file); });
+        menu.addSeparator();
         const auto sourcePath =
             existingWorkingTreeFile(m_repositoryRoot, file.path, file.originalPath);
-        QMenu menu(this);
         auto* editSource = menu.addAction(text("编辑源代码", "Edit Source"));
         editSource->setObjectName(QStringLiteral("editSourceAction"));
         editSource->setEnabled(!sourcePath.isEmpty());
@@ -1245,43 +1252,39 @@ void MainWindow::buildWorkspace() {
         if (index < 0) {
             if (item->childCount() == 0 || item->data(0, Qt::UserRole + 2).toString().isEmpty())
                 return;
-            const bool shouldBeStaged = item->checkState(0) == Qt::Checked;
-            QStringList paths;
-            bool conflicts = false;
-            {
-                const QSignalBlocker block(m_changes);
-                for (int childIndex = 0; childIndex < item->childCount(); ++childIndex) {
-                    auto* child = item->child(childIndex);
-                    const int fileIndex = child->data(0, Qt::UserRole).toInt();
-                    if (fileIndex < 0 || fileIndex >= m_status.files.size())
-                        continue;
-                    const auto& file = m_status.files[fileIndex];
-                    const bool wasStaged = child->data(0, Qt::UserRole + 1).toBool();
-                    if (wasStaged != shouldBeStaged) {
-                        paths.append(file.path);
-                        if (!file.originalPath.isEmpty())
-                            paths.append(file.originalPath);
-                        conflicts = conflicts || file.conflict();
-                    }
-                    child->setCheckState(0, shouldBeStaged ? Qt::Checked : Qt::Unchecked);
-                }
+            const bool selected = item->checkState(0) == Qt::Checked;
+            const QSignalBlocker block(m_changes);
+            for (int childIndex = 0; childIndex < item->childCount(); ++childIndex) {
+                auto* child = item->child(childIndex);
+                const int fileIndex = child->data(0, Qt::UserRole).toInt();
+                if (fileIndex < 0 || fileIndex >= m_status.files.size())
+                    continue;
+                const auto& file = m_status.files[fileIndex];
+                const bool include = selected && !file.conflict();
+                child->setCheckState(0, include ? Qt::Checked : Qt::Unchecked);
+                if (include)
+                    m_excludedCommitPaths.remove(file.path);
+                else
+                    m_excludedCommitPaths.insert(file.path);
             }
-            if (!paths.isEmpty())
-                stagePaths(paths, !shouldBeStaged, conflicts);
+            syncChangeGroupCheckState(item);
+            updateActions();
             return;
         }
         if (index >= m_status.files.size())
             return;
-        const bool wasStaged = item->data(0, Qt::UserRole + 1).toBool();
-        const bool shouldBeStaged = item->checkState(0) == Qt::Checked;
-        if (wasStaged == shouldBeStaged)
-            return;
-        syncChangeGroupCheckState(item->parent());
         const auto& file = m_status.files[index];
-        QStringList paths{file.path};
-        if (!file.originalPath.isEmpty())
-            paths.append(file.originalPath);
-        stagePaths(paths, !shouldBeStaged, file.conflict());
+        if (file.conflict()) {
+            const QSignalBlocker block(m_changes);
+            item->setCheckState(0, Qt::Unchecked);
+            return;
+        }
+        if (item->checkState(0) == Qt::Checked)
+            m_excludedCommitPaths.remove(file.path);
+        else
+            m_excludedCommitPaths.insert(file.path);
+        syncChangeGroupCheckState(item->parent());
+        updateActions();
     });
     connect(m_changes, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* item) {
         const int i = item->data(0, Qt::UserRole).toInt();
@@ -1300,15 +1303,24 @@ void MainWindow::buildWorkspace() {
     m_amend = new QCheckBox(text("修订上一次提交（amend）", "Amend last commit"), commitPanel);
     m_amend->setObjectName(QStringLiteral("amendCheckbox"));
     commitLayout->addWidget(m_amend);
-    m_commit = new QPushButton(text("提交已暂存文件", "Commit staged files"), commitPanel);
+    m_commit = new QPushButton(text("提交所选文件", "Commit selected files"), commitPanel);
     m_commit->setObjectName(QStringLiteral("commitButton"));
     m_commit->setProperty("primary", true);
     m_commit->setMinimumHeight(34);
     m_commit->setShortcut(QKeySequence("Ctrl+Return"));
-    commitLayout->addWidget(m_commit);
-    connect(m_commit, &QPushButton::clicked, this, &MainWindow::commitChanges);
+    m_commitAndPush = new QPushButton(text("提交并推送", "Commit and Push"), commitPanel);
+    m_commitAndPush->setObjectName(QStringLiteral("commitAndPushButton"));
+    m_commitAndPush->setMinimumHeight(34);
+    auto* commitButtons = new QHBoxLayout;
+    commitButtons->setContentsMargins(0, 0, 0, 0);
+    commitButtons->setSpacing(6);
+    commitButtons->addWidget(m_commit, 1);
+    commitButtons->addWidget(m_commitAndPush, 1);
+    commitLayout->addLayout(commitButtons);
+    connect(m_commit, &QPushButton::clicked, this, [this] { commitChanges(false); });
+    connect(m_commitAndPush, &QPushButton::clicked, this, [this] { commitChanges(true); });
     auto* commitHint = new QLabel(
-        text("勾选文件暂存 · Ctrl+Enter", "Check files to stage · Ctrl+Enter"), commitPanel);
+        text("勾选要提交的文件 · Ctrl+Enter", "Select files to commit · Ctrl+Enter"), commitPanel);
     commitHint->setObjectName(QStringLiteral("commitHint"));
     commitLayout->addWidget(commitHint);
     top->setSizes({780, 316});
@@ -2049,13 +2061,19 @@ void MainWindow::refreshRepository() {
     m_refreshPending = false;
     m_refreshing = true;
     const int generation = m_generation;
+    const QString previousRepositoryRoot = m_repositoryRoot;
     // --show-cdup contains only ../ components, never a quoted/non-ASCII root path.
-    m_git->run({"rev-parse", "--show-cdup"}, [this, generation](const GitResult& discovery) {
+    m_git->run({"rev-parse", "--show-cdup"}, [this, generation,
+                                              previousRepositoryRoot](const GitResult& discovery) {
         if (generation != m_generation)
             return;
         if (!discovery.ok()) {
             m_refreshing = false;
             m_repositoryRoot.clear();
+            if (!previousRepositoryRoot.isEmpty()) {
+                m_excludedCommitPaths.clear();
+                m_commitSelectionInitialized = false;
+            }
             m_status = {};
             m_hasHead = false;
             m_branch->setText(text("无 Git 仓库", "No Git repository"));
@@ -2073,8 +2091,13 @@ void MainWindow::refreshRepository() {
             relative.chop(1);
         if (relative.endsWith('\r'))
             relative.chop(1);
-        m_repositoryRoot =
+        const auto discoveredRoot =
             QDir::cleanPath(QDir(m_projectRoot).absoluteFilePath(QString::fromUtf8(relative)));
+        if (discoveredRoot != previousRepositoryRoot) {
+            m_excludedCommitPaths.clear();
+            m_commitSelectionInitialized = false;
+        }
+        m_repositoryRoot = discoveredRoot;
         if (!m_operations || m_operations->root() != m_repositoryRoot) {
             if (m_operations)
                 m_operations->deleteLater();
@@ -2127,13 +2150,16 @@ void MainWindow::refreshRepository() {
 void MainWindow::renderChanges() {
     const QSignalBlocker block(m_changes);
     m_changes->clear();
-    auto* staged = new QTreeWidgetItem(m_changes, {text("已暂存", "Staged")});
-    auto* changed = new QTreeWidgetItem(m_changes, {text("工作区更改", "Working tree")});
+    QSet<QString> currentPaths;
+    for (const auto& file : m_status.files)
+        if (file.state() != FileState::Ignored)
+            currentPaths.insert(file.path);
+    m_excludedCommitPaths.intersect(currentPaths);
+    auto* changed = new QTreeWidgetItem(m_changes, {text("更改", "Changes")});
     auto* untracked = new QTreeWidgetItem(m_changes, {text("未跟踪", "Untracked")});
-    staged->setData(0, Qt::UserRole + 2, QStringLiteral("staged"));
-    changed->setData(0, Qt::UserRole + 2, QStringLiteral("working"));
+    changed->setData(0, Qt::UserRole + 2, QStringLiteral("changes"));
     untracked->setData(0, Qt::UserRole + 2, QStringLiteral("untracked"));
-    for (auto* group : {staged, changed, untracked}) {
+    for (auto* group : {changed, untracked}) {
         group->setData(0, Qt::UserRole, -1);
         group->setFlags((group->flags() & ~Qt::ItemIsSelectable) | Qt::ItemIsUserCheckable);
         auto font = group->font(0);
@@ -2141,8 +2167,8 @@ void MainWindow::renderChanges() {
         group->setFont(0, font);
         group->setForeground(0, QColor("#a4a9b4"));
         group->setExpanded(true);
-        group->setToolTip(0, text("勾选暂存本组全部文件，取消勾选撤销本组暂存。",
-                                  "Check to stage every file in this group; uncheck to unstage."));
+        group->setToolTip(0, text("勾选或取消本组文件的提交选择。",
+                                  "Select or deselect every file in this group for the commit."));
     }
     int count = 0;
     for (int i = 0; i < m_status.files.size(); ++i) {
@@ -2150,23 +2176,25 @@ void MainWindow::renderChanges() {
         if (file.state() == FileState::Ignored)
             continue;
         ++count;
-        const auto append = [&](QTreeWidgetItem* group, bool isStaged) {
+        const auto append = [&](QTreeWidgetItem* group) {
             auto* item = new QTreeWidgetItem(
                 group, {stateCode(file.state()) + "   " + displayPath(file.path)});
-            item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+            if (!file.conflict())
+                item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
             item->setForeground(0, stateColor(file.state()));
             item->setData(0, Qt::UserRole, i);
-            item->setData(0, Qt::UserRole + 1, isStaged);
-            item->setCheckState(0, isStaged ? Qt::Checked : Qt::Unchecked);
+            const bool selected = !file.conflict() && !m_excludedCommitPaths.contains(file.path);
+            item->setData(0, Qt::UserRole + 1, selected);
+            item->setCheckState(0, selected ? Qt::Checked : Qt::Unchecked);
+            if (!m_commitSelectionInitialized && !file.conflict())
+                item->setCheckState(0, Qt::Checked);
             item->setToolTip(
                 0, file.path + (file.originalPath.isEmpty() ? "" : "\n← " + file.originalPath));
         };
-        if (file.staged())
-            append(staged, true);
-        if (file.unstaged())
-            append(file.state() == FileState::Untracked ? untracked : changed, false);
+        append(file.state() == FileState::Untracked ? untracked : changed);
     }
-    for (auto* group : {staged, changed, untracked}) {
+    m_commitSelectionInitialized = true;
+    for (auto* group : {changed, untracked}) {
         syncChangeGroupCheckState(group);
         group->setText(0, group->text(0) + QStringLiteral("  (%1)").arg(group->childCount()));
         group->setHidden(group->childCount() == 0);
@@ -2852,7 +2880,6 @@ void MainWindow::showDiff(QTreeWidgetItem* item) {
     if (index < 0 || index >= m_status.files.size() || m_repositoryRoot.isEmpty())
         return;
     const auto file = m_status.files[index];
-    const bool staged = item->data(0, Qt::UserRole + 1).toBool();
     const int request = ++m_diffRequest;
     m_bottom->setCurrentIndex(1);
     if (file.state() == FileState::Untracked) {
@@ -2875,8 +2902,8 @@ void MainWindow::showDiff(QTreeWidgetItem* item) {
     }
     m_diff->setPlainText(text("正在加载差异…", "Loading diff…"));
     QStringList args = {"diff", "--no-ext-diff", "--no-textconv", "--unified=3"};
-    if (staged)
-        args.append("--cached");
+    if (m_hasHead)
+        args.append("HEAD");
     args.append({"--", file.path});
     if (!file.originalPath.isEmpty())
         args.append(file.originalPath);
@@ -2906,58 +2933,9 @@ void MainWindow::showCommit(int row) {
                });
 }
 
-void MainWindow::stageSelection(bool unstage) {
-    if (gitBusy() || m_repositoryRoot.isEmpty())
-        return;
-    QStringList paths;
-    bool conflicts = false;
-    for (const auto* item : m_changes->selectedItems()) {
-        const int i = item->data(0, Qt::UserRole).toInt();
-        if (i < 0 || i >= m_status.files.size() ||
-            item->data(0, Qt::UserRole + 1).toBool() != unstage)
-            continue;
-        const auto& file = m_status.files[i];
-        paths.append(file.path);
-        if (!file.originalPath.isEmpty())
-            paths.append(file.originalPath);
-        conflicts |= file.conflict();
-    }
-    paths.removeDuplicates();
-    if (paths.isEmpty())
-        return;
-    stagePaths(paths, unstage, conflicts);
-}
-
-void MainWindow::stagePaths(QStringList paths, bool unstage, bool conflicts) {
-    if (gitBusy() || m_repositoryRoot.isEmpty()) {
-        renderChanges();
-        return;
-    }
-    paths.removeDuplicates();
-    if (paths.isEmpty())
-        return;
-    if (conflicts &&
-        QMessageBox::warning(
-            this, text("暂存冲突文件", "Stage conflicted files"),
-            text("暂存会将所选文件标记为已解决。请先手动清理冲突标记并保存，确认继续？",
-                 "Staging marks these files as resolved. Have you manually resolved and saved all "
-                 "conflicts?"),
-            QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes) {
-        renderChanges();
-        return;
-    }
-    QStringList args;
-    if (unstage)
-        args = m_hasHead ? QStringList{"restore", "--staged", "--"}
-                         : QStringList{"rm", "--cached", "--ignore-unmatch", "--"};
-    else
-        args = {"add", "--"};
-    args.append(paths);
-    runOperation(args);
-}
-
-void MainWindow::commitChanges() {
-    if (!m_commit->isEnabled())
+void MainWindow::commitChanges(bool pushAfter) {
+    const auto* button = pushAfter ? m_commitAndPush : m_commit;
+    if (!button || !button->isEnabled())
         return;
     if (m_amend->isChecked() &&
         QMessageBox::warning(
@@ -2968,13 +2946,41 @@ void MainWindow::commitChanges() {
                      "consider the impact on collaborators. Continue?"),
             QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes)
         return;
-    QStringList args = {"commit"};
+    QStringList paths;
+    for (int groupIndex = 0; groupIndex < m_changes->topLevelItemCount(); ++groupIndex) {
+        const auto* group = m_changes->topLevelItem(groupIndex);
+        for (int childIndex = 0; childIndex < group->childCount(); ++childIndex) {
+            const auto* item = group->child(childIndex);
+            if (item->checkState(0) != Qt::Checked)
+                continue;
+            const int index = item->data(0, Qt::UserRole).toInt();
+            if (index < 0 || index >= m_status.files.size() || m_status.files[index].conflict())
+                continue;
+            const auto& file = m_status.files[index];
+            paths.append(file.path);
+            if (!file.originalPath.isEmpty())
+                paths.append(file.originalPath);
+        }
+    }
+    paths.removeDuplicates();
+    if (paths.isEmpty())
+        return;
+
+    QStringList args = {"commit", "--only"};
     if (m_amend->isChecked())
         args.append("--amend");
     args.append({"-m", m_message->toPlainText()});
-    runOperation(args, [this] {
-        m_message->clear();
-        m_amend->setChecked(false);
+    args.append("--");
+    args.append(paths);
+    QStringList addArgs{"add", "-A", "--"};
+    addArgs.append(paths);
+    runOperation(addArgs, [this, args, pushAfter] {
+        runOperation(args, [this, pushAfter] {
+            m_message->clear();
+            m_amend->setChecked(false);
+            if (pushAfter)
+                showPushPreview();
+        });
     });
 }
 
@@ -3020,6 +3026,93 @@ void MainWindow::remoteOperation(const QString& operation) {
                               QMessageBox::Cancel) != QMessageBox::Yes)
         return;
     runOperation(operation == "pull" ? QStringList{"pull", "--ff-only"} : QStringList{operation});
+}
+
+void MainWindow::showRemotes() {
+    if (!m_git || m_repositoryRoot.isEmpty() || gitBusy())
+        return;
+    RemoteManagerDialog dialog(m_git, m_repositoryRoot, m_english, this);
+    dialog.exec();
+    refreshRepository();
+}
+
+void MainWindow::showCredentials() {
+    if (!m_git || gitBusy())
+        return;
+    GitCredentialDialog dialog(m_git, m_english, this);
+    dialog.exec();
+}
+
+void MainWindow::showPushPreview() {
+    if (!m_git || m_repositoryRoot.isEmpty())
+        return;
+    if (m_pushDialog) {
+        m_pushDialog->raise();
+        m_pushDialog->activateWindow();
+        return;
+    }
+    auto* dialog = new PushDialog(m_git, m_repositoryRoot, m_status.branch, m_status.tracking,
+                                  m_english, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    m_pushDialog = dialog;
+    connect(dialog, &PushDialog::pushRequested, this, &MainWindow::pushToRemote);
+    connect(dialog, &PushDialog::diffRequested, this,
+            [this](const QString& commit, const CommitFileChange& file) {
+                showCommitFileDiff(commit, file);
+            });
+    connect(dialog, &QDialog::finished, this, [this] {
+        m_pushDialog = nullptr;
+        updateActions();
+    });
+    dialog->show();
+    dialog->raise();
+    dialog->activateWindow();
+    updateActions();
+}
+
+void MainWindow::pushToRemote(const QString& remote, const QString& branch) {
+    if (!m_git || !m_pushDialog || m_operationRunning || remote.isEmpty() || branch.isEmpty() ||
+        remote.startsWith('-') || branch.startsWith('-'))
+        return;
+    QPointer<PushDialog> dialog = m_pushDialog;
+    dialog->setPushRunning(true);
+    m_operationRunning = true;
+    updateActions();
+    m_git->run(
+        repositoryArgs({"check-ref-format", "--branch", branch}),
+        [this, dialog, remote, branch](const GitResult& valid) {
+            if (!valid.ok()) {
+                m_operationRunning = false;
+                if (dialog)
+                    dialog->pushFinished(
+                        false, text("目标分支名称无效。", "The target branch name is invalid."));
+                updateActions();
+                return;
+            }
+            const QString refspec = QStringLiteral("HEAD:refs/heads/") + branch;
+            m_git->run(
+                repositoryArgs({"push", "--porcelain", remote, refspec}),
+                [this, dialog](const GitResult& result) {
+                    m_operationRunning = false;
+                    if (result.ok()) {
+                        m_output->appendPlainText(QString::fromUtf8(result.output));
+                        if (dialog)
+                            dialog->pushFinished(true, text("推送完成。", "Push completed."));
+                    } else if (result.cancelled) {
+                        if (dialog)
+                            dialog->pushFinished(
+                                false, text("推送已取消；请刷新确认远程状态。",
+                                            "Push cancelled; refresh to verify the remote."));
+                    } else {
+                        if (dialog)
+                            dialog->pushFinished(false, QString::fromUtf8(result.error).left(2000));
+                        reportError(text("推送失败", "Push failed"), result);
+                    }
+                    refreshRepository();
+                    updateActions();
+                },
+                120000);
+        });
 }
 
 void MainWindow::showBranches() {
@@ -3117,26 +3210,26 @@ void MainWindow::updateActions() {
     m_branch->setEnabled(repository && !busy);
     m_cancelAction->setEnabled(busy);
     m_projectButton->setEnabled(!busy);
-    bool stagedSelected = false, unstagedSelected = false;
-    for (const auto* item : m_changes->selectedItems()) {
-        if (item->data(0, Qt::UserRole).toInt() < 0)
-            continue;
-        if (item->data(0, Qt::UserRole + 1).toBool())
-            stagedSelected = true;
-        else
-            unstagedSelected = true;
+    int selectedCount = 0;
+    for (int groupIndex = 0; groupIndex < m_changes->topLevelItemCount(); ++groupIndex) {
+        const auto* group = m_changes->topLevelItem(groupIndex);
+        for (int childIndex = 0; childIndex < group->childCount(); ++childIndex) {
+            const auto* item = group->child(childIndex);
+            const int index = item->data(0, Qt::UserRole).toInt();
+            if (index >= 0 && index < m_status.files.size() && item->checkState(0) == Qt::Checked &&
+                !m_status.files[index].conflict())
+                ++selectedCount;
+        }
     }
-    m_stage->setEnabled(repository && !busy && unstagedSelected);
-    m_unstage->setEnabled(repository && !busy && stagedSelected);
-    int stagedCount = 0;
-    for (const auto& change : m_status.files)
-        if (change.staged())
-            ++stagedCount;
-    m_commit->setText(stagedCount
-                          ? text("提交 %1 个已暂存文件", "Commit %1 staged files").arg(stagedCount)
-                          : text("提交已暂存文件", "Commit staged files"));
-    m_commit->setEnabled(repository && !busy && m_pendingOperation == PendingOperation::None &&
-                         stagedCount > 0 && !m_message->toPlainText().trimmed().isEmpty());
+    const QString commitText =
+        selectedCount ? text("提交所选文件（%1）", "Commit selected (%1)").arg(selectedCount)
+                      : text("提交所选文件", "Commit selected files");
+    const bool canCommit = repository && !busy && !m_pushDialog &&
+                           m_pendingOperation == PendingOperation::None && selectedCount > 0 &&
+                           !m_message->toPlainText().trimmed().isEmpty();
+    m_commit->setText(commitText);
+    m_commit->setEnabled(canCommit);
+    m_commitAndPush->setEnabled(canCommit);
     m_loadMore->setEnabled(repository && !busy && m_hasHead);
     updateAdvancedActions();
 }

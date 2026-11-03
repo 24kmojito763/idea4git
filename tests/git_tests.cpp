@@ -292,6 +292,29 @@ class GitTests final : public QObject {
         QVERIFY(!status.files[0].staged());
     }
 
+    void stdinInputIsNotExposedInCommandArguments() {
+        QTemporaryDir directory;
+        GitClient client(directory.path());
+        const QByteArray secret = "test-access-token-that-must-not-be-an-argument";
+        bool completed = false;
+        GitResult result;
+        QStringList completedArguments;
+        connect(&client, &GitClient::commandCompleted, this,
+                [&](const QStringList& arguments, const GitResult&) {
+                    completedArguments = arguments;
+                });
+        client.runWithInput({"hash-object", "--stdin"}, secret, [&](const GitResult& value) {
+            result = value;
+            completed = true;
+        });
+        QTRY_VERIFY_WITH_TIMEOUT(completed, 5000);
+        QVERIFY(result.ok());
+        QCOMPARE(result.output.trimmed().size(), 40);
+        QVERIFY(!completedArguments.join(' ').toUtf8().contains(secret));
+        QVERIFY(!result.output.contains(secret));
+        QVERIFY(!result.error.contains(secret));
+    }
+
     void cancellationDropsQueuedCommands() {
         QTemporaryDir directory;
         GitClient client(directory.path());

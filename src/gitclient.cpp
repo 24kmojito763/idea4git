@@ -19,6 +19,14 @@ GitClient::GitClient(QString directory, QObject* parent)
     });
     connect(&m_process, &QProcess::readyReadStandardOutput, this, &GitClient::readOutput);
     connect(&m_process, &QProcess::readyReadStandardError, this, &GitClient::readOutput);
+    connect(&m_process, &QProcess::started, this, [this] {
+        if (!m_current.input.isEmpty()) {
+            m_process.write(m_current.input);
+            m_current.input.fill('\0');
+            m_current.input.clear();
+            m_process.closeWriteChannel();
+        }
+    });
     connect(&m_process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
             [this](int code, QProcess::ExitStatus status) {
                 complete(status == QProcess::NormalExit ? code : -1);
@@ -33,7 +41,11 @@ GitClient::GitClient(QString directory, QObject* parent)
 
 GitClient::~GitClient() {
     m_destroying = true;
-    m_queue.clear();
+    while (!m_queue.isEmpty()) {
+        auto job = m_queue.dequeue();
+        job.input.fill('\0');
+    }
+    m_current.input.fill('\0');
     m_process.disconnect(this);
     if (m_process.state() != QProcess::NotRunning) {
         m_process.kill();
@@ -50,7 +62,14 @@ void GitClient::run(const QStringList& arguments, Callback callback, int timeout
 void GitClient::runWithEnvironment(const QStringList& arguments,
                                    const QMap<QString, QString>& environment, Callback callback,
                                    int timeoutMs) {
-    m_queue.enqueue({arguments, std::move(callback), timeoutMs, environment});
+    m_queue.enqueue({arguments, std::move(callback), timeoutMs, environment, {}});
+    if (!m_running)
+        QTimer::singleShot(0, this, &GitClient::startNext);
+}
+
+void GitClient::runWithInput(const QStringList& arguments, QByteArray input, Callback callback,
+                             int timeoutMs) {
+    m_queue.enqueue({arguments, std::move(callback), timeoutMs, {}, std::move(input)});
     if (!m_running)
         QTimer::singleShot(0, this, &GitClient::startNext);
 }
@@ -87,10 +106,10 @@ void GitClient::startNext() {
         break;
     }
     const int separator = m_current.arguments.indexOf("--");
-    const bool literal =
-        QStringList{"add", "rm", "restore", "diff", "diff-tree", "log", "ls-files", "ls-tree"}
-            .contains(command) &&
-        separator >= 0 && separator + 1 < m_current.arguments.size();
+    const bool literal = QStringList{"add",       "rm",  "restore",  "commit", "diff",
+                                     "diff-tree", "log", "ls-files", "ls-tree"}
+                             .contains(command) &&
+                         separator >= 0 && separator + 1 < m_current.arguments.size();
     environment.remove("GIT_LITERAL_PATHSPECS");
     if (literal) {
         environment.remove("GIT_GLOB_PATHSPECS");
@@ -124,6 +143,8 @@ void GitClient::complete(int exitCode) {
     m_timeout.stop();
     readOutput();
     m_result.exitCode = exitCode;
+    m_current.input.fill('\0');
+    m_current.input.clear();
     auto callback = std::move(m_current.callback);
     const auto args = m_current.arguments;
     const auto result = m_result;
@@ -139,13 +160,16 @@ void GitClient::complete(int exitCode) {
 
 void GitClient::cancelAll() {
     // Queued mutations must never run after the user presses Cancel.
-    const auto dropped = std::move(m_queue);
+    auto dropped = std::move(m_queue);
     m_queue.clear();
     GitResult cancelled;
     cancelled.cancelled = true;
-    for (const auto& job : dropped)
+    while (!dropped.isEmpty()) {
+        auto job = dropped.dequeue();
         if (job.callback)
             job.callback(cancelled);
+        job.input.fill('\0');
+    }
     if (!m_running) {
         emit activityChanged(false, {});
         return;

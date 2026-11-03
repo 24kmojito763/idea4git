@@ -4,6 +4,7 @@
 #include "gitoperations.h"
 #include "gitstatus.h"
 #include <QMainWindow>
+#include <QPointer>
 #include <QSet>
 #include <QStringList>
 
@@ -31,6 +32,7 @@ namespace idea4git {
 class CodeEditor;
 class ProjectModel;
 class ProjectFilter;
+class PushDialog;
 
 class MainWindow final : public QMainWindow {
     Q_OBJECT
@@ -58,6 +60,10 @@ class MainWindow final : public QMainWindow {
     void showAdvancedOperation(OperationKind kind, QString revision = {});
     void showConflict(QString path = {});
     void showStashes();
+    void showRemotes();
+    void showCredentials();
+    void showPushPreview();
+    void pushToRemote(const QString& remote, const QString& branch);
     void sequenceControl(SequenceAction action);
     bool prepareWorktreeChange();
     void reloadUnmodifiedEditors();
@@ -75,6 +81,7 @@ class MainWindow final : public QMainWindow {
     void loadHistory(bool append = false);
     void loadCommitFiles(int row);
     void showCommitFileDiff(const QString& commit, const CommitFileChange& file);
+    void showChangeFileDiff(const FileChange& file);
     void showWorkingTreeDiff(CodeEditor* editor, const QString& path, const FileChange& file);
     void showBranchDiff(CodeEditor* editor, const QString& path, const QString& branchName,
                         const QString& branchRef);
@@ -85,9 +92,7 @@ class MainWindow final : public QMainWindow {
     void renderChanges();
     void showDiff(QTreeWidgetItem* item);
     void showCommit(int row);
-    void stageSelection(bool unstage);
-    void stagePaths(QStringList paths, bool unstage, bool conflicts);
-    void commitChanges();
+    void commitChanges(bool pushAfter = false);
     void remoteOperation(const QString& operation);
     void runOperation(const QStringList& args, std::function<void()> success = {});
     QStringList repositoryArgs(const QStringList& args) const;
@@ -112,7 +117,9 @@ class MainWindow final : public QMainWindow {
     QStringList m_expandedProjectTreePaths;
     QStringList m_pendingTreeExpansions;
     QSet<QString> m_loadedProjectTreeDirectories;
+    QSet<QString> m_excludedCommitPaths;
     bool m_projectTreeStateKnown = false;
+    bool m_commitSelectionInitialized = false;
     GitClient* m_git = nullptr;
     GitOperations* m_operations = nullptr;
     PendingOperation m_pendingOperation = PendingOperation::None;
@@ -167,8 +174,7 @@ class MainWindow final : public QMainWindow {
     QToolButton* m_commitPanelRailButton = nullptr;
     QToolButton* m_historyPanelRailButton = nullptr;
     QPushButton* m_commit = nullptr;
-    QToolButton* m_stage = nullptr;
-    QToolButton* m_unstage = nullptr;
+    QPushButton* m_commitAndPush = nullptr;
     QPushButton* m_loadMore = nullptr;
     QLabel* m_repoState = nullptr;
     QLabel* m_changeCount = nullptr;
@@ -195,6 +201,7 @@ class MainWindow final : public QMainWindow {
     QAction* m_commitPanelAction = nullptr;
     QAction* m_historyPanelAction = nullptr;
     QDialog* m_globalSearchDialog = nullptr;
+    QPointer<PushDialog> m_pushDialog;
 };
 
 } // namespace idea4git

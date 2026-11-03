@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QByteArray>
 #include <QMap>
 #include <QProcess>
 #include <QQueue>
@@ -27,6 +28,8 @@ class GitClient final : public QObject {
     void run(const QStringList& arguments, Callback callback, int timeoutMs = 30000);
     void runWithEnvironment(const QStringList& arguments, const QMap<QString, QString>& environment,
                             Callback callback, int timeoutMs = 30000);
+    void runWithInput(const QStringList& arguments, QByteArray input, Callback callback,
+                      int timeoutMs = 30000);
     void cancelAll();
     bool busy() const;
     QString directory() const { return m_directory; }
@@ -41,6 +44,7 @@ class GitClient final : public QObject {
         Callback callback;
         int timeoutMs;
         QMap<QString, QString> environment;
+        QByteArray input;
     };
     void startNext();
     void readOutput();

@@ -19,6 +19,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPlainTextEdit>
 #include <QPointer>
@@ -285,7 +286,7 @@ class UiTests final : public QObject {
         QTRY_VERIFY_WITH_TIMEOUT(!window.gitBusy(), 5000);
         auto* changes = window.findChild<QTreeWidget*>("changesTree");
         QVERIFY(changes);
-        auto* item = changes->topLevelItem(2)->child(0);
+        auto* item = changes->topLevelItem(1)->child(0);
         QVERIFY(item);
         const auto area = changes->visualItemRect(item);
         QTest::mouseClick(changes->viewport(), Qt::LeftButton, Qt::NoModifier, area.center());
@@ -294,11 +295,17 @@ class UiTests final : public QObject {
         QVERIFY(window.currentEditor());
         QCOMPARE(window.currentEditor()->filePath(), path);
         QTRY_VERIFY_WITH_TIMEOUT(!window.gitBusy(), 5000);
-        auto* stage = window.findChild<QToolButton*>("stageButton");
-        QVERIFY(stage->isEnabled());
-        QTest::mouseClick(stage, Qt::LeftButton);
-        QTRY_VERIFY_WITH_TIMEOUT(!window.gitBusy(), 5000);
-        QVERIFY(git(repository.path(), {"diff", "--cached"}).contains("+contents"));
+        QVERIFY(!window.findChild<QToolButton*>("stageButton"));
+        QVERIFY(!window.findChild<QToolButton*>("unstageButton"));
+        auto* message = window.findChild<QPlainTextEdit*>("commitMessage");
+        QVERIFY(message);
+        message->setPlainText("Commit special path");
+        auto* commit = window.findChild<QPushButton*>("commitButton");
+        QVERIFY(commit && commit->isEnabled());
+        QTest::mouseClick(commit, Qt::LeftButton);
+        QTRY_VERIFY_WITH_TIMEOUT(!window.gitBusy(), 10000);
+        QCOMPARE(git(repository.path(), {"show", QStringLiteral("HEAD:") + relative}).trimmed(),
+                 QByteArray("contents"));
     }
 
     void projectTreeExpansionPersistsPerProject() {
@@ -837,77 +844,59 @@ class UiTests final : public QObject {
                  "The expanded folder has no visible disclosure arrow");
     }
 
-    void actualStageUnstageAndCommitFromSubdirectory() {
+    void commitOnlySelectedFilesFromSubdirectory() {
         QTemporaryDir repository;
         QVERIFY(git(repository.path(), {"init", "--initial-branch=main"}) != "TEST_GIT_ERROR");
         QDir().mkpath(repository.filePath("sub"));
         const auto path = repository.filePath("sub/file.txt");
+        const auto otherPath = repository.filePath("other.txt");
         QVERIFY(write(path, "first\n"));
+        QVERIFY(write(otherPath, "other base\n"));
         QVERIFY(git(repository.path(), {"add", "."}) != "TEST_GIT_ERROR");
         QVERIFY(git(repository.path(), {"commit", "-m", "Initial"}) != "TEST_GIT_ERROR");
         QVERIFY(write(path, "second\n"));
+        QVERIFY(write(otherPath, "other staged\n"));
+        QVERIFY(git(repository.path(), {"add", "--", "other.txt"}) != "TEST_GIT_ERROR");
         MainWindow window;
         QVERIFY(window.openProject(repository.filePath("sub")));
         window.show();
         QTRY_VERIFY_WITH_TIMEOUT(!window.gitBusy(), 5000);
         auto* changes = window.findChild<QTreeWidget*>("changesTree");
         QVERIFY(changes);
-        auto* stage = window.findChild<QToolButton*>("stageButton");
-        QVERIFY(stage);
-        auto* unstage = window.findChild<QToolButton*>("unstageButton");
-        QVERIFY(unstage);
-        auto* uncheckedChange = changes->topLevelItem(1)->child(0);
-        QVERIFY(uncheckedChange);
-        QVERIFY(uncheckedChange->flags() & Qt::ItemIsUserCheckable);
-        QCOMPARE(uncheckedChange->checkState(0), Qt::Unchecked);
-        uncheckedChange->setCheckState(0, Qt::Checked);
-        QTRY_VERIFY_WITH_TIMEOUT(!window.gitBusy(), 5000);
-        QVERIFY(git(repository.path(), {"diff", "--cached"}).contains("+second"));
-        QTRY_VERIFY_WITH_TIMEOUT(changes->topLevelItem(0)->childCount() == 1, 5000);
-        auto* checkedStaged = changes->topLevelItem(0)->child(0);
-        QVERIFY(checkedStaged);
-        QCOMPARE(checkedStaged->checkState(0), Qt::Checked);
-        checkedStaged->setCheckState(0, Qt::Unchecked);
-        QTRY_VERIFY_WITH_TIMEOUT(!window.gitBusy(), 5000);
-        QCOMPARE(git(repository.path(), {"diff", "--cached"}), QByteArray());
-
-        changes->setCurrentItem(changes->topLevelItem(1)->child(0));
-        QVERIFY(stage->isEnabled());
-        QTest::mouseClick(stage, Qt::LeftButton);
-        QTRY_VERIFY_WITH_TIMEOUT(!window.gitBusy(), 5000);
-        QVERIFY(git(repository.path(), {"diff", "--cached"}).contains("+second"));
-        changes->setCurrentItem(changes->topLevelItem(0)->child(0));
-        QVERIFY(unstage->isEnabled());
-        QTest::mouseClick(unstage, Qt::LeftButton);
-        QTRY_VERIFY_WITH_TIMEOUT(!window.gitBusy(), 5000);
-        QCOMPARE(git(repository.path(), {"diff", "--cached"}), QByteArray());
-        changes->setCurrentItem(changes->topLevelItem(1)->child(0));
-        QTest::mouseClick(stage, Qt::LeftButton);
-        QTRY_VERIFY_WITH_TIMEOUT(!window.gitBusy(), 5000);
-        QVERIFY(write(path, "third\n")); // Not staged: this must not enter the commit.
+        QVERIFY(!window.findChild<QToolButton*>("stageButton"));
+        QVERIFY(!window.findChild<QToolButton*>("unstageButton"));
+        const auto findFile = [changes](const QString& pathText) {
+            for (int groupIndex = 0; groupIndex < changes->topLevelItemCount(); ++groupIndex) {
+                auto* group = changes->topLevelItem(groupIndex);
+                for (int childIndex = 0; childIndex < group->childCount(); ++childIndex) {
+                    auto* item = group->child(childIndex);
+                    if (item->toolTip(0) == pathText)
+                        return item;
+                }
+            }
+            return static_cast<QTreeWidgetItem*>(nullptr);
+        };
+        auto* selectedFile = findFile(QStringLiteral("sub/file.txt"));
+        auto* excludedStagedFile = findFile(QStringLiteral("other.txt"));
+        QVERIFY(selectedFile && excludedStagedFile);
+        QVERIFY(selectedFile->flags() & Qt::ItemIsUserCheckable);
+        QCOMPARE(selectedFile->checkState(0), Qt::Checked);
+        excludedStagedFile->setCheckState(0, Qt::Unchecked);
+        QVERIFY(git(repository.path(), {"diff", "--cached", "--", "other.txt"})
+                    .contains("+other staged"));
+        QVERIFY(git(repository.path(), {"diff", "--cached", "--", "sub/file.txt"}).isEmpty());
         auto* message = window.findChild<QPlainTextEdit*>("commitMessage");
         QVERIFY(message);
         message->setPlainText("Commit via Qt UI");
         auto* button = window.findChild<QPushButton*>("commitButton");
         QVERIFY(button->isEnabled());
         QTest::mouseClick(button, Qt::LeftButton);
-        QTRY_VERIFY_WITH_TIMEOUT(!window.gitBusy(), 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(!window.gitBusy(), 10000);
         QCOMPARE(git(repository.path(), {"show", "HEAD:sub/file.txt"}), QByteArray("second\n"));
-        QCOMPARE(read(path), QByteArray("third\n"));
+        QCOMPARE(git(repository.path(), {"show", "HEAD:other.txt"}), QByteArray("other base\n"));
+        QVERIFY(git(repository.path(), {"diff", "--cached", "--", "other.txt"})
+                    .contains("+other staged"));
         QVERIFY(message->toPlainText().isEmpty());
-        window.openFile(path);
-        auto* change = changes->topLevelItem(1)->child(0);
-        QVERIFY(change);
-        const auto area = changes->visualItemRect(change);
-        QTest::mouseClick(changes->viewport(), Qt::LeftButton, Qt::NoModifier, area.center());
-        QTRY_VERIFY_WITH_TIMEOUT(!window.gitBusy(), 5000);
-        const auto* diff = window.findChild<QPlainTextEdit*>("diffView");
-        QVERIFY(diff);
-        QVERIFY(diff->toPlainText().contains("+third"));
-        QVERIFY(diff->toPlainText().contains("-second"));
-        const auto screenshot = qEnvironmentVariable("IDEA4GIT_QA_SCREENSHOT");
-        if (!screenshot.isEmpty())
-            QVERIFY(window.grab().save(screenshot));
     }
 
     void historyFiltersChangedFilesAndDiffNavigation() {
@@ -1284,7 +1273,7 @@ class UiTests final : public QObject {
         }
     }
 
-    void changeGroupCheckBoxesStageAndUnstageAll() {
+    void changeGroupCheckBoxesSelectFilesForCommit() {
         QTemporaryDir repository;
         QVERIFY(git(repository.path(), {"init", "--initial-branch=main"}) != "TEST_GIT_ERROR");
         const auto firstPath = repository.filePath("first.txt");
@@ -1313,23 +1302,197 @@ class UiTests final : public QObject {
         };
 
         QTRY_VERIFY_WITH_TIMEOUT(!window.gitBusy(), 10000);
-        QTRY_VERIFY_WITH_TIMEOUT(findGroup(QStringLiteral("working")) &&
-                                     findGroup(QStringLiteral("working"))->childCount() == 2,
+        QTRY_VERIFY_WITH_TIMEOUT(findGroup(QStringLiteral("changes")) &&
+                                     findGroup(QStringLiteral("changes"))->childCount() == 2,
                                  10000);
-        auto* working = findGroup(QStringLiteral("working"));
-        auto* staged = findGroup(QStringLiteral("staged"));
-        QVERIFY(working && staged);
-        QCOMPARE(working->checkState(0), Qt::Unchecked);
-        working->setCheckState(0, Qt::Checked);
-        QTRY_VERIFY_WITH_TIMEOUT(findGroup(QStringLiteral("staged"))->childCount() == 2, 10000);
-        QTRY_VERIFY_WITH_TIMEOUT(!window.gitBusy(), 10000);
-        QCOMPARE(findGroup(QStringLiteral("staged"))->checkState(0), Qt::Checked);
+        auto* changesGroup = findGroup(QStringLiteral("changes"));
+        QVERIFY(changesGroup);
+        QCOMPARE(changesGroup->checkState(0), Qt::Checked);
+        changesGroup->setCheckState(0, Qt::Unchecked);
+        QCOMPARE(changesGroup->checkState(0), Qt::Unchecked);
+        for (int index = 0; index < changesGroup->childCount(); ++index)
+            QCOMPARE(changesGroup->child(index)->checkState(0), Qt::Unchecked);
+        QCOMPARE(git(repository.path(), {"diff", "--cached"}), QByteArray());
+        QVERIFY(git(repository.path(), {"diff"}).contains("+first changed"));
+        changesGroup->setCheckState(0, Qt::Checked);
+        QCOMPARE(changesGroup->checkState(0), Qt::Checked);
+        for (int index = 0; index < changesGroup->childCount(); ++index)
+            QCOMPARE(changesGroup->child(index)->checkState(0), Qt::Checked);
+    }
 
-        staged = findGroup(QStringLiteral("staged"));
-        staged->setCheckState(0, Qt::Unchecked);
-        QTRY_VERIFY_WITH_TIMEOUT(findGroup(QStringLiteral("working"))->childCount() == 2, 10000);
+    void changeFileGitDiffContextMenuOpensMainAreaDiff() {
+        QTemporaryDir repository;
+        QVERIFY(git(repository.path(), {"init", "--initial-branch=main"}) != "TEST_GIT_ERROR");
+        const auto trackedPath = repository.filePath("tracked.txt");
+        const auto untrackedPath = repository.filePath("new.txt");
+        QVERIFY(write(trackedPath, "base version\n"));
+        QVERIFY(git(repository.path(), {"add", "--all"}) != "TEST_GIT_ERROR");
+        QVERIFY(git(repository.path(),
+                    {"-c", "user.name=idea4git", "-c", "user.email=idea4git@example.invalid",
+                     "commit", "-m", "Base"}) != "TEST_GIT_ERROR");
+        QVERIFY(write(trackedPath, "staged version\n"));
+        QVERIFY(git(repository.path(), {"add", "--", "tracked.txt"}) != "TEST_GIT_ERROR");
+        QVERIFY(write(trackedPath, "working version\n"));
+        QVERIFY(write(untrackedPath, "new file content\n"));
+
+        MainWindow window;
+        QVERIFY(window.openProject(repository.path()));
+        window.show();
+        auto* changes = window.findChild<QTreeWidget*>("changesTree");
+        auto* tabs = window.findChild<QTabWidget*>("editorTabs");
+        QVERIFY(changes && tabs);
+        const auto findGroup = [changes](const QString& kind) {
+            for (int i = 0; i < changes->topLevelItemCount(); ++i) {
+                auto* group = changes->topLevelItem(i);
+                if (group->data(0, Qt::UserRole + 2).toString() == kind)
+                    return group;
+            }
+            return static_cast<QTreeWidgetItem*>(nullptr);
+        };
+        const auto findFile = [](QTreeWidgetItem* group, const QString& path) {
+            if (!group)
+                return static_cast<QTreeWidgetItem*>(nullptr);
+            for (int i = 0; i < group->childCount(); ++i) {
+                auto* item = group->child(i);
+                if (item->toolTip(0) == path)
+                    return item;
+            }
+            return static_cast<QTreeWidgetItem*>(nullptr);
+        };
         QTRY_VERIFY_WITH_TIMEOUT(!window.gitBusy(), 10000);
-        QCOMPARE(findGroup(QStringLiteral("working"))->checkState(0), Qt::Unchecked);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            findFile(findGroup(QStringLiteral("changes")), QStringLiteral("tracked.txt")) &&
+                findFile(findGroup(QStringLiteral("untracked")), QStringLiteral("new.txt")),
+            10000);
+
+        struct ContextMenuState {
+            bool actionFound = false;
+            bool enabled = false;
+        };
+        const auto triggerGitDiff = [&window, changes](QTreeWidgetItem* item) {
+            auto state = std::make_shared<ContextMenuState>();
+            changes->scrollToItem(item);
+            const auto rect = changes->visualItemRect(item);
+            QTimer::singleShot(0, &window, [state] {
+                auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+                auto* action = menu ? menu->findChild<QAction*>("gitDiffAction") : nullptr;
+                if (!action)
+                    return;
+                state->actionFound = true;
+                state->enabled = action->isEnabled();
+                if (state->enabled)
+                    action->trigger();
+                menu->close();
+            });
+            QMetaObject::invokeMethod(changes, "customContextMenuRequested", Qt::DirectConnection,
+                                      Q_ARG(QPoint, rect.center()));
+            return state;
+        };
+        const auto currentPatch = [tabs] {
+            auto* current = tabs->currentWidget();
+            return current ? current->findChild<QPlainTextEdit*>("fileDiffPatch") : nullptr;
+        };
+
+        auto* previous = tabs->currentWidget();
+        auto state = triggerGitDiff(
+            findFile(findGroup(QStringLiteral("changes")), QStringLiteral("tracked.txt")));
+        QVERIFY(state->actionFound && state->enabled);
+        QTRY_VERIFY_WITH_TIMEOUT(tabs->currentWidget() != previous && currentPatch(), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(!window.gitBusy(), 10000);
+        QVERIFY(currentPatch()->toPlainText().contains("-base version"));
+        QVERIFY(currentPatch()->toPlainText().contains("+working version"));
+        QVERIFY(!currentPatch()->toPlainText().contains("staged version"));
+
+        previous = tabs->currentWidget();
+        state = triggerGitDiff(
+            findFile(findGroup(QStringLiteral("untracked")), QStringLiteral("new.txt")));
+        QVERIFY(state->actionFound && state->enabled);
+        QTRY_VERIFY_WITH_TIMEOUT(tabs->currentWidget() != previous && currentPatch(), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(!window.gitBusy(), 10000);
+        QVERIFY(currentPatch()->toPlainText().contains("+new file content"));
+    }
+
+    void remoteManagerMasksCredentialsInRemoteUrls() {
+        QTemporaryDir repository;
+        QVERIFY(repository.isValid());
+        QVERIFY(git(repository.path(), {"init", "--initial-branch=main"}) != "TEST_GIT_ERROR");
+        QVERIFY(git(repository.path(), {"remote", "add", "origin",
+                                        "https://alice:private-token@example.invalid/repo.git"}) !=
+                "TEST_GIT_ERROR");
+        GitClient client(repository.path());
+        RemoteManagerDialog dialog(&client, repository.path(), false);
+        dialog.show();
+        auto* table = dialog.findChild<QTableWidget*>("remotesTable");
+        QVERIFY(table);
+        QTRY_COMPARE_WITH_TIMEOUT(table->rowCount(), 1, 5000);
+        const QString displayedUrl = table->item(0, 1)->text();
+        QVERIFY(!displayedUrl.contains(QStringLiteral("private-token")));
+        QVERIFY(displayedUrl.contains(QStringLiteral("•••")));
+        QVERIFY(dialog.findChild<QPushButton*>("addRemoteButton")->isEnabled());
+    }
+
+    void commitAndPushPreviewsCommitsFilesAndMainAreaDiff() {
+        QTemporaryDir repository;
+        QTemporaryDir remote;
+        QVERIFY(repository.isValid() && remote.isValid());
+        QVERIFY(git(remote.path(), {"init", "--bare", "--initial-branch=main"}) !=
+                "TEST_GIT_ERROR");
+        QVERIFY(git(repository.path(), {"init", "--initial-branch=main"}) != "TEST_GIT_ERROR");
+        const auto path = repository.filePath("app.txt");
+        QVERIFY(write(path, "before push\n"));
+        QVERIFY(git(repository.path(), {"add", "--all"}) != "TEST_GIT_ERROR");
+        QVERIFY(git(repository.path(),
+                    {"-c", "user.name=idea4git", "-c", "user.email=idea4git@example.invalid",
+                     "commit", "-m", "Base"}) != "TEST_GIT_ERROR");
+        QVERIFY(git(repository.path(), {"remote", "add", "origin", remote.path()}) !=
+                "TEST_GIT_ERROR");
+        QVERIFY(write(path, "after push\n"));
+
+        MainWindow window;
+        QVERIFY(window.openProject(repository.path()));
+        window.show();
+        QTRY_VERIFY_WITH_TIMEOUT(!window.gitBusy(), 10000);
+        auto* message = window.findChild<QPlainTextEdit*>("commitMessage");
+        auto* commitAndPush = window.findChild<QPushButton*>("commitAndPushButton");
+        QVERIFY(message && commitAndPush);
+        message->setPlainText("Commit for push preview");
+        QVERIFY(commitAndPush->isEnabled());
+        QTest::mouseClick(commitAndPush, Qt::LeftButton);
+
+        PushDialog* dialog = nullptr;
+        QTRY_VERIFY_WITH_TIMEOUT((dialog = window.findChild<PushDialog*>("pushDialog")), 10000);
+        auto* commits = dialog->findChild<QTableWidget*>("pushCommitTable");
+        auto* files = dialog->findChild<QListWidget*>("pushCommitFiles");
+        QVERIFY(commits && files);
+        QTRY_COMPARE_WITH_TIMEOUT(commits->rowCount(), 2, 15000);
+        commits->setCurrentCell(1, 0);
+        QTRY_COMPARE_WITH_TIMEOUT(files->count(), 1, 10000);
+        QCOMPARE(files->item(0)->data(Qt::UserRole).toString(), QStringLiteral("app.txt"));
+
+        QVERIFY(commits->item(1, 1)->text().contains(QStringLiteral("Commit for push preview")));
+
+        auto* push = dialog->findChild<QPushButton*>("pushNowButton");
+        QVERIFY(push && push->isEnabled());
+        QString pushError;
+        QTimer dismissPushError;
+        dismissPushError.setInterval(10);
+        connect(&dismissPushError, &QTimer::timeout, qApp, [&] {
+            auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+            if (!box)
+                return;
+            pushError = box->text() + '\n' + box->informativeText();
+            box->accept();
+        });
+        dismissPushError.start();
+        QTest::mouseClick(push, Qt::LeftButton);
+        QTRY_VERIFY_WITH_TIMEOUT(!window.gitBusy(), 20000);
+        dismissPushError.stop();
+        auto* status = dialog->findChild<QLabel*>("pushPreviewStatus");
+        QVERIFY(status);
+        QVERIFY2(pushError.isEmpty(), qPrintable(pushError));
+        QVERIFY2(status->text().contains(QString::fromUtf8("推送完成")),
+                 qPrintable(status->text()));
+        QCOMPARE(git(remote.path(), {"show", "HEAD:app.txt"}), QByteArray("after push\n"));
     }
 
     void locateCurrentFileAndEditSourceContextMenus() {
