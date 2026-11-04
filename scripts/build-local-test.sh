@@ -42,6 +42,7 @@ done
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 build_dir="$repo_root/build/local-test"
+application_version="$(tr -d '\r\n' < "$repo_root/VERSION")"
 
 for tool in cmake ninja; do
     if ! command -v "$tool" >/dev/null 2>&1; then
@@ -55,6 +56,7 @@ printf 'Configuring isolated local test build: %s\n' "$build_dir"
 cmake -S "$repo_root" -B "$build_dir" -G Ninja \
     -DCMAKE_BUILD_TYPE=Debug \
     -DBUILD_TESTING=ON \
+    -DIDEA4GIT_VERSION="$application_version" \
     -DIDEA4GIT_TEST_BUILD=ON
 
 cmake --build "$build_dir" --parallel "${IDEA4GIT_BUILD_JOBS:-2}"

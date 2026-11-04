@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
-set(IDEA4GIT_VERSION "1.0.0" CACHE STRING "idea4git application and package version")
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" IDEA4GIT_DEFAULT_VERSION LIMIT_COUNT 1)
+set(IDEA4GIT_VERSION "${IDEA4GIT_DEFAULT_VERSION}" CACHE STRING "idea4git application and package version")
 project(idea4git VERSION "${IDEA4GIT_VERSION}" LANGUAGES CXX)
 option(IDEA4GIT_TEST_BUILD "Build a side-by-side local test application" OFF)
 

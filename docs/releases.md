@@ -9,8 +9,8 @@
 3. From a clean, tested commit, create and push a version tag:
 
    ```bash
-   git tag v1.0.0
-   git push origin v1.0.0
+   git tag v1.0.1
+   git push origin v1.0.1
    ```
 
 4. Watch the Actions run. Once every platform build and test passes, the workflow publishes the release at [idea4git Releases](https://github.com/24kmojito763/idea4git/releases); the latest version is also available at `/releases/latest`.
