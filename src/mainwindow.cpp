@@ -17,6 +17,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QEvent>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -3235,9 +3236,69 @@ void MainWindow::updateActions() {
 }
 
 void MainWindow::changeEvent(QEvent* event) {
+    constexpr int kLateDeactivationGraceMs = 250;
+    if (event->type() == QEvent::WindowStateChange) {
+        const auto oldState = static_cast<QWindowStateChangeEvent*>(event)->oldState();
+        const auto newState = windowState();
+        if (newState.testFlag(Qt::WindowMinimized)) {
+            m_lastKnownMaximized = oldState.testFlag(Qt::WindowMaximized) || m_lastKnownMaximized ||
+                                   m_restoreMaximizedOnActivation;
+            m_restoreMaximizedOnActivation = m_lastKnownMaximized;
+            m_pendingNormalAfterMaximize = false;
+        } else if (newState.testFlag(Qt::WindowMaximized)) {
+            m_lastKnownMaximized = true;
+            m_restoreMaximizedOnActivation = false;
+            m_pendingNormalAfterMaximize = false;
+        } else if (oldState.testFlag(Qt::WindowMinimized)) {
+            m_restoreMaximizedOnActivation = m_lastKnownMaximized;
+        } else if (oldState.testFlag(Qt::WindowMaximized) && m_lastKnownMaximized) {
+            if (isActiveWindow()) {
+                // Wayland can report max -> normal before the matching deactivation event.
+                // Keep the restore intent briefly so a delayed deactivation can claim it;
+                // discard it if the window remains active after the grace period.
+                m_pendingNormalAfterMaximize = true;
+                QTimer::singleShot(kLateDeactivationGraceMs, this, [this] {
+                    if (!m_pendingNormalAfterMaximize)
+                        return;
+                    m_pendingNormalAfterMaximize = false;
+                    if (isActiveWindow()) {
+                        m_lastKnownMaximized = false;
+                        m_restoreMaximizedOnActivation = false;
+                    } else {
+                        m_restoreMaximizedOnActivation = m_lastKnownMaximized;
+                    }
+                });
+            } else {
+                m_restoreMaximizedOnActivation = true;
+            }
+        }
+    }
+
     QMainWindow::changeEvent(event);
-    if (event->type() == QEvent::ActivationChange && isActiveWindow() && m_git && !gitBusy())
-        QTimer::singleShot(0, this, &MainWindow::refreshRepository);
+    if (event->type() == QEvent::ActivationChange) {
+        if (!isActiveWindow()) {
+            if (m_pendingNormalAfterMaximize)
+                m_pendingNormalAfterMaximize = false;
+            if (m_lastKnownMaximized)
+                m_restoreMaximizedOnActivation = true;
+        } else {
+            if (m_pendingNormalAfterMaximize) {
+                m_pendingNormalAfterMaximize = false;
+                m_lastKnownMaximized = false;
+                m_restoreMaximizedOnActivation = false;
+            }
+            if (m_restoreMaximizedOnActivation && !isMaximized()) {
+                QTimer::singleShot(0, this, [this] {
+                    if (!m_restoreMaximizedOnActivation || !isActiveWindow())
+                        return;
+                    m_restoreMaximizedOnActivation = false;
+                    showMaximized();
+                });
+            }
+        }
+        if (m_git && !gitBusy())
+            QTimer::singleShot(0, this, &MainWindow::refreshRepository);
+    }
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {

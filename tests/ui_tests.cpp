@@ -87,6 +87,87 @@ class UiTests final : public QObject {
         qputenv("GIT_CONFIG_GLOBAL", QFile::encodeName(config));
     }
 
+    void maximizedWindowRestoresMaximizedAfterMinimizeAndActivation() {
+        MainWindow window;
+        window.showMaximized();
+        QTRY_VERIFY(window.isMaximized());
+
+        window.showMinimized();
+        QTRY_VERIFY(window.isMinimized());
+
+        // Model the desktop shell restoring it as normal after another window took focus.
+        window.setWindowState(Qt::WindowNoState);
+        QTRY_VERIFY(!window.isMinimized());
+        QVERIFY(!window.isMaximized());
+        QWidget otherWindow;
+        otherWindow.show();
+        otherWindow.activateWindow();
+        QTRY_VERIFY_WITH_TIMEOUT(otherWindow.isActiveWindow(), 1000);
+        window.activateWindow();
+
+        QTRY_VERIFY_WITH_TIMEOUT(window.isActiveWindow(), 1000);
+        QTRY_VERIFY_WITH_TIMEOUT(window.isMaximized(), 1000);
+    }
+
+    void maximizedWindowRestoresAfterNormalStateActivation() {
+        MainWindow window;
+        window.showMaximized();
+        QTRY_VERIFY(window.isMaximized());
+
+        // Some Wayland minimize/restore paths report max -> normal without a minimized state.
+        window.setWindowState(Qt::WindowNoState);
+        QVERIFY(!window.isMaximized());
+
+        QWidget otherWindow;
+        otherWindow.show();
+        otherWindow.activateWindow();
+        QTRY_VERIFY_WITH_TIMEOUT(otherWindow.isActiveWindow(), 1000);
+        window.activateWindow();
+
+        QTRY_VERIFY_WITH_TIMEOUT(window.isActiveWindow(), 1000);
+        QTRY_VERIFY_WITH_TIMEOUT(window.isMaximized(), 1000);
+    }
+
+    void maximizedWindowRestoresWhenDeactivationArrivesAfterStateChange() {
+        MainWindow window;
+        QWidget otherWindow;
+        otherWindow.show();
+        window.showMaximized();
+        QTRY_VERIFY(window.isMaximized());
+        window.activateWindow();
+        QTRY_VERIFY_WITH_TIMEOUT(window.isActiveWindow(), 1000);
+
+        // Wayland can deliver max -> normal first, then the deactivation event later.
+        window.setWindowState(Qt::WindowNoState);
+        QVERIFY(!window.isMaximized());
+        QTest::qWait(25); // Let the current zero-delay cleanup run before focus is lost.
+
+        otherWindow.activateWindow();
+        QTRY_VERIFY_WITH_TIMEOUT(otherWindow.isActiveWindow(), 1000);
+        window.activateWindow();
+        QTRY_VERIFY_WITH_TIMEOUT(window.isActiveWindow(), 1000);
+        QTRY_VERIFY_WITH_TIMEOUT(window.isMaximized(), 1000);
+    }
+
+    void intentionalRestoreToNormalStaysNormalAfterActivation() {
+        MainWindow window;
+        window.showMaximized();
+        QTRY_VERIFY(window.isMaximized());
+
+        window.setWindowState(Qt::WindowNoState);
+        QTRY_VERIFY(!window.isMaximized());
+        QTest::qWait(300); // Remain active past the Wayland deactivation grace period.
+
+        QWidget otherWindow;
+        otherWindow.show();
+        otherWindow.activateWindow();
+        QTRY_VERIFY_WITH_TIMEOUT(otherWindow.isActiveWindow(), 1000);
+        window.activateWindow();
+
+        QTRY_VERIFY_WITH_TIMEOUT(window.isActiveWindow(), 1000);
+        QVERIFY(!window.isMaximized());
+    }
+
     void bomAndCrLfRoundTrip() {
         QTemporaryDir directory;
         const auto path = directory.filePath("sample.cpp");

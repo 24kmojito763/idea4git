@@ -120,6 +120,9 @@ class MainWindow final : public QMainWindow {
     QSet<QString> m_excludedCommitPaths;
     bool m_projectTreeStateKnown = false;
     bool m_commitSelectionInitialized = false;
+    bool m_lastKnownMaximized = false;
+    bool m_pendingNormalAfterMaximize = false;
+    bool m_restoreMaximizedOnActivation = false;
     GitClient* m_git = nullptr;
     GitOperations* m_operations = nullptr;
     PendingOperation m_pendingOperation = PendingOperation::None;
